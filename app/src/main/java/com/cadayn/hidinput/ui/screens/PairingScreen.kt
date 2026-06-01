@@ -47,7 +47,7 @@ import com.cadayn.hidinput.ui.components.TText
 import com.cadayn.hidinput.ui.theme.Relay
 
 @Composable
-fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit, onPickFile: () -> Unit = {}) {
+fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit) {
     val col = Relay.colors
     val devices = remember(c.registered, c.conn) { c.pairedDevices }
 
@@ -93,12 +93,12 @@ fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit, onPickFile
         }
 
         Spacer(Modifier.height(22.dp))
-        WifiPanel(c, onPickFile)
+        WifiPanel(c)
     }
 }
 
 @Composable
-private fun WifiPanel(c: RelayController, onPickFile: () -> Unit) {
+private fun WifiPanel(c: RelayController) {
     val col = Relay.colors
     var ip by remember { mutableStateOf(c.wifiHost ?: "") }
     var pin by remember { mutableStateOf("") }

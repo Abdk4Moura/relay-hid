@@ -1289,14 +1289,33 @@ private fun GyroPad(c: RelayController, modifier: Modifier, onClick: () -> Unit)
     DisposableEffect(Unit) {
         val sm = context.getSystemService(android.content.Context.SENSOR_SERVICE) as android.hardware.SensorManager
         val gyro = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE)
+        var biasX = 0f; var biasY = 0f      // resting drift, auto-tracked while idle
+        var smX = 0f; var smY = 0f          // smoothed angular rate (kills jitter)
+        var accX = 0f; var accY = 0f        // sub-pixel carry (keeps slow aim precise)
         val listener = object : android.hardware.SensorEventListener {
             override fun onSensorChanged(e: android.hardware.SensorEvent) {
-                if (!engagedNow.value) return
-                val gain = c.sensitivity * 5f + 28f
-                var ox = e.values[1]; var oy = e.values[0]      // yaw, pitch (device frame, portrait)
-                if (abs(ox) < 0.02f) ox = 0f
-                if (abs(oy) < 0.02f) oy = 0f
-                val dx = (-ox * gain).roundToInt(); val dy = (-oy * gain).roundToInt()
+                val rawX = e.values[1]; val rawY = e.values[0]      // yaw, pitch (portrait device frame)
+                if (!engagedNow.value) {
+                    biasX += (rawX - biasX) * 0.03f                  // calibrate drift while the phone rests
+                    biasY += (rawY - biasY) * 0.03f
+                    smX = 0f; smY = 0f
+                    return
+                }
+                val dead = 0.012f
+                var ox = rawX - biasX; var oy = rawY - biasY
+                ox = if (abs(ox) < dead) 0f else ox - dead * (if (ox > 0) 1f else -1f)
+                oy = if (abs(oy) < dead) 0f else oy - dead * (if (oy > 0) 1f else -1f)
+                smX = smX * 0.35f + ox * 0.65f                       // low-pass
+                smY = smY * 0.35f + oy * 0.65f
+                val sens = c.sensitivity * 5f + 22f
+                val acc = c.accel / 10f
+                val gx = sens * (1f + abs(smX) * acc * 2.2f)         // ballistic gain
+                val gy = sens * (1f + abs(smY) * acc * 2.2f)
+                val ix = if (c.invertX) 1f else -1f
+                val iy = if (c.invertY) 1f else -1f
+                accX += ix * smX * gx; accY += iy * smY * gy
+                val dx = accX.roundToInt(); accX -= dx
+                val dy = accY.roundToInt(); accY -= dy
                 if (dx != 0 || dy != 0) c.mouseMove(dx, dy)
             }
             override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}

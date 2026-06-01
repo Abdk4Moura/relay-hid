@@ -46,7 +46,6 @@ fun RelayApp(
     permsGranted: Boolean,
     onMakeDiscoverable: () -> Unit,
     onRequestPerms: () -> Unit,
-    onPickFile: () -> Unit = {},
 ) {
     val colors = Relay.colors
     Box(Modifier.fillMaxSize().background(colors.bg)) {
@@ -86,7 +85,6 @@ fun RelayApp(
                         onNav = { screen = it },
                         immersive = immersive,
                         onToggleImmersive = { immersive = !immersive },
-                        onPickFile = onPickFile,
                     )
                 }
             }
@@ -115,10 +113,9 @@ private fun ScreenContent(
     onNav: (String) -> Unit,
     immersive: Boolean,
     onToggleImmersive: () -> Unit,
-    onPickFile: () -> Unit,
 ) {
     when (screen) {
-        "pairing" -> com.cadayn.hidinput.ui.screens.PairingScreen(c, onMakeDiscoverable, onPickFile)
+        "pairing" -> com.cadayn.hidinput.ui.screens.PairingScreen(c, onMakeDiscoverable)
         "keyboard" -> com.cadayn.hidinput.ui.screens.KeyboardScreen(c, immersive, onToggleImmersive)
         "send" -> com.cadayn.hidinput.ui.screens.SendScreen(c)
         "remote" -> com.cadayn.hidinput.ui.screens.RemoteScreen(c)
