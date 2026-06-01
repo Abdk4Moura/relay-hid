@@ -134,6 +134,24 @@ class HidPeripheralManager private constructor(private val context: Context) {
         hidDevice?.connect(device)
     }
 
+    /** Rename the phone's Bluetooth adapter (GLOBAL — affects all BT) so hosts show this name.
+     *  Saves the original once so it can be restored. Hosts already bonded keep the cached name
+     *  until they forget & re-pair. */
+    fun setAdapterName(name: String): Boolean {
+        val a = adapter ?: return false
+        if (recon.getString("origBtName", null) == null) {
+            runCatching { a.name }.getOrNull()?.let { recon.edit().putString("origBtName", it).apply() }
+        }
+        return runCatching { a.name = name; true }.getOrDefault(false)
+    }
+
+    fun restoreAdapterName() {
+        val a = adapter ?: return
+        val orig = recon.getString("origBtName", null) ?: return
+        runCatching { a.name = orig }
+        recon.edit().remove("origBtName").apply()
+    }
+
     // ----------------------------- Keyboard -----------------------------
 
     /** Tap a key (with optional modifier), then release. Runs on the worker thread. */

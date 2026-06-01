@@ -75,6 +75,8 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     var haptics by mutableStateOf(prefs.getBoolean("haptics", true)); private set
     var showReadout by mutableStateOf(prefs.getBoolean("showReadout", true)); private set
     var autoReconnect by mutableStateOf(prefs.getBoolean("autoReconnect", true)); private set
+    var btName by mutableStateOf(prefs.getString("btName", "Relay")!!); private set
+    var renameBt by mutableStateOf(prefs.getBoolean("renameBt", false)); private set
     var landscape by mutableStateOf(prefs.getBoolean("landscape", true)); private set
     var profile by mutableStateOf(prefs.getString("profile", "ipad")!!); private set            // ipad|mac|windows|linux|androidtv|appletv|ps
     var snippets by mutableStateOf(prefs.getString("snippets", "")!!.split("").filter { it.isNotEmpty() }); private set
@@ -83,7 +85,12 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     val log = mutableStateListOf<ActivityEvent>()
 
     // ---- lifecycle ----
-    fun start() { hid.autoReconnect = autoReconnect; hid.start() }
+    fun start() { hid.autoReconnect = autoReconnect; if (renameBt) hid.setAdapterName(btName); hid.start() }
+    fun updateBtName(v: String) { btName = v; prefs.edit().putString("btName", v).apply(); if (renameBt) hid.setAdapterName(v) }
+    fun updateRenameBt(v: Boolean) {
+        renameBt = v; prefs.edit().putBoolean("renameBt", v).apply()
+        if (v) hid.setAdapterName(btName) else hid.restoreAdapterName()
+    }
     fun stop() { /* HID registration is owned by the foreground service; keep it alive across activity restarts */ }
     fun reconnect() = hid.reconnect()
 

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,7 +30,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.SolidColor
 import com.cadayn.hidinput.ui.RelayController
+import com.cadayn.hidinput.ui.components.BtnKind
+import com.cadayn.hidinput.ui.components.RelayButton
 import com.cadayn.hidinput.ui.components.RelaySlider
 import com.cadayn.hidinput.ui.components.RelaySwitch
 import com.cadayn.hidinput.ui.components.Seg
@@ -124,12 +128,35 @@ fun SettingsScreen(c: RelayController) {
                 SettingRow("Swap ⌘ ↔ ⌃ (advanced)", "Override the profile's modifier mapping") {
                     RelaySwitch(c.swapCmd, c::updateSwapCmd)
                 }
-                SettingRow("Advertised name", "How this phone appears in Bluetooth settings") {
-                    Text("Relay", style = Relay.type.mono.copy(color = Relay.colors.textDim))
+                SettingRow("Custom Bluetooth name", "Renames this phone's Bluetooth (all connections). Forget & re-pair the host to see the new name.") {
+                    RelaySwitch(c.renameBt, c::updateRenameBt)
                 }
+                if (c.renameBt) BtNameField(c)
             }
             Spacer(Modifier.height(30.dp))
         }
+    }
+}
+
+@Composable
+private fun BtNameField(c: RelayController) {
+    val col = Relay.colors
+    var name by remember { mutableStateOf(c.btName) }
+    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+            Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(col.bgDeep)
+                .border(1.dp, col.border, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            BasicTextField(
+                value = name, onValueChange = { name = it.take(24) }, singleLine = true,
+                textStyle = Relay.type.mono.copy(color = col.text, fontSize = 14.sp), cursorBrush = SolidColor(col.accent),
+                decorationBox = { inner ->
+                    if (name.isEmpty()) Text("Relay", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 14.sp))
+                    inner()
+                },
+            )
+        }
+        RelayButton("Apply", { c.updateBtName(name.ifBlank { "Relay" }) }, kind = BtnKind.Secondary)
     }
 }
 
