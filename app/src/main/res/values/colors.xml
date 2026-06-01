@@ -1,0 +1,4 @@
+<resources>
+    <!-- Dark bg token, used as the window background to avoid a launch flash. -->
+    <color name="relay_bg">#0D0E11</color>
+</resources>

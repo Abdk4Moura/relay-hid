@@ -1,0 +1,9 @@
+<resources>
+    <!-- Window theme only — actual UI is Jetpack Compose (RelayTheme). -->
+    <style name="Theme.Relay" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/relay_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
