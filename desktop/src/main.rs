@@ -85,6 +85,7 @@ struct Status {
     last: String,
     tx: Option<TcpStream>,   // write half of the active connection (for clipboard push)
     last_clip: String,       // last clipboard value synced, to avoid echo loops
+    tray_blink: Option<std::sync::mpsc::Sender<()>>,  // ping → tray flashes "attention" on clipboard rx
 }
 type Shared = Arc<Mutex<Status>>;
 type SharedInj = Arc<Mutex<Injector>>;
@@ -356,7 +357,11 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
         };
         match msg {
             Msg::Ping {} => {} // heartbeat: presence only — keeps the read window from expiring
-            Msg::Clip { s } => { set_clip(&s); note(st, |st| st.last_clip = s); }
+            Msg::Clip { s } => {
+                set_clip(&s);
+                note(st, |st| { st.last_clip = s; st.last = "clipboard ← phone".into(); st.events += 1; });
+                if let Ok(g) = st.lock() { if let Some(tx) = &g.tray_blink { let _ = tx.send(()); } }  // flash the tray
+            }
             Msg::File { name, data } => match save_file(&name, &data, st) {
                 Ok((fname, n)) => push_to_phone(st, &format!("{{\"t\":\"fileok\",\"name\":\"{}\",\"size\":{}}}\n", json_escape(&fname), n)),
                 Err(e) => push_to_phone(st, &format!("{{\"t\":\"fileerr\",\"name\":\"{}\",\"msg\":\"{}\"}}\n", json_escape(&name), json_escape(&e))),
@@ -718,6 +723,7 @@ fn main() {
         last: "idle".into(),
         tx: None,
         last_clip: String::new(),
+        tray_blink: None,
     }));
 
     // local web control panel
@@ -770,6 +776,7 @@ fn main() {
 // ----------------------------- system tray (StatusNotifierItem via zbus) -----------------------------
 struct Sni {
     url: String,
+    status: Arc<Mutex<String>>,   // "Active" normally; flips to "NeedsAttention" on clipboard rx
 }
 
 #[zbus::interface(name = "org.kde.StatusNotifierItem")]
@@ -781,7 +788,9 @@ impl Sni {
     #[zbus(property)]
     fn title(&self) -> String { "Relay Desktop".into() }
     #[zbus(property)]
-    fn status(&self) -> String { "Active".into() }
+    fn status(&self) -> String { self.status.lock().map(|s| s.clone()).unwrap_or_else(|_| "Active".into()) }
+    #[zbus(property)]
+    fn attention_icon_name(&self) -> String { "relay-desktop".into() }
     #[zbus(property)]
     fn icon_name(&self) -> String { "relay-desktop".into() }
     #[zbus(property)]
@@ -923,10 +932,15 @@ impl DbusMenu {
 }
 
 fn start_tray(ui_port: u16, st: Shared) {
+    let tray_status = Arc::new(Mutex::new(String::from("Active")));
+    // channel so the input loop can ask the tray to flash on clipboard receipt
+    let (blink_tx, blink_rx) = std::sync::mpsc::channel::<()>();
+    if let Ok(mut s) = st.lock() { s.tray_blink = Some(blink_tx); }
+    let status_for_sni = Arc::clone(&tray_status);
     thread::spawn(move || {
         let url = format!("http://127.0.0.1:{ui_port}");
         let conn = match zbus::blocking::connection::Builder::session()
-            .and_then(|b| b.serve_at("/StatusNotifierItem", Sni { url: url.clone() }))
+            .and_then(|b| b.serve_at("/StatusNotifierItem", Sni { url: url.clone(), status: status_for_sni }))
             .and_then(|b| b.serve_at("/MenuBar", DbusMenu { url, st }))
             .and_then(|b| b.build())
         {
@@ -946,8 +960,27 @@ fn start_tray(ui_port: u16, st: Shared) {
             let _: Result<(), _> = p.call("RegisterStatusNotifierItem", &name);
             println!("│ tray: registered StatusNotifierItem");
         }
-        loop {
-            thread::sleep(std::time::Duration::from_secs(3600));
+        let emit = |status: &str| {
+            let _ = conn.emit_signal(
+                Option::<&str>::None,
+                "/StatusNotifierItem",
+                "org.kde.StatusNotifierItem",
+                "NewStatus",
+                &status,
+            );
+        };
+        // Blink the tray on each clipboard receive: blip NeedsAttention a few times, then settle.
+        while blink_rx.recv().is_ok() {
+            // drain any queued pings (coalesce bursts)
+            while blink_rx.try_recv().is_ok() {}
+            for _ in 0..3 {
+                if let Ok(mut s) = tray_status.lock() { *s = "NeedsAttention".into(); }
+                emit("NeedsAttention");
+                thread::sleep(std::time::Duration::from_millis(280));
+                if let Ok(mut s) = tray_status.lock() { *s = "Active".into(); }
+                emit("Active");
+                thread::sleep(std::time::Duration::from_millis(180));
+            }
         }
     });
 }
