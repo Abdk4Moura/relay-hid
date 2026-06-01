@@ -446,6 +446,52 @@ fn push_to_phone(status: &Shared, line: &str) {
     }
 }
 
+/// CLI helper: POST a file to the running receiver's local panel (/send), returns the HTTP status.
+fn cli_send_file(name: &str, data: &[u8]) -> std::io::Result<u16> {
+    let mut s = TcpStream::connect("127.0.0.1:47601")?;
+    let safe = name.replace(['\r', '\n'], "_");
+    let head = format!(
+        "POST /send HTTP/1.1\r\nHost: localhost\r\nX-Filename: {safe}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        data.len()
+    );
+    s.write_all(head.as_bytes())?;
+    s.write_all(data)?;
+    s.flush()?;
+    let mut buf = Vec::new();
+    std::io::Read::read_to_end(&mut s, &mut buf)?;
+    let code = String::from_utf8_lossy(&buf)
+        .lines().next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    Ok(code)
+}
+
+/// Stream a file down to the connected phone (chunked, with progress in the panel status).
+fn push_file_to_phone(name: &str, data: &[u8], st: &Shared) -> Result<(), String> {
+    use base64::Engine;
+    if st.lock().map(|s| s.tx.is_none()).unwrap_or(true) {
+        return Err("no phone connected".into());
+    }
+    let safe = name.rsplit(['/', '\\']).next().unwrap_or("file");
+    let id = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
+    push_to_phone(st, &format!("{{\"t\":\"fstart\",\"id\":{id},\"name\":\"{}\",\"size\":{}}}\n", json_escape(safe), data.len()));
+    let chunk = 128 * 1024;
+    let mut off = 0;
+    while off < data.len() {
+        let end = (off + chunk).min(data.len());
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data[off..end]);
+        push_to_phone(st, &format!("{{\"t\":\"fchunk\",\"id\":{id},\"data\":\"{b64}\"}}\n"));
+        off = end;
+        let pct = end * 100 / data.len().max(1);
+        note(st, |s| s.last = format!("→ phone: {safe} {pct}%"));
+    }
+    push_to_phone(st, &format!("{{\"t\":\"fend\",\"id\":{id}}}\n"));
+    println!("⬆ sent {safe} → phone ({} bytes)", data.len());
+    note(st, |s| s.last = format!("sent {safe} → phone"));
+    Ok(())
+}
+
 /// Pop a native desktop notification via org.freedesktop.Notifications (works on COSMIC/GNOME/KDE
 /// with no external dependency); fall back to notify-send if the bus call fails.
 fn notify_desktop(summary: &str, body: &str) {
@@ -594,6 +640,29 @@ fn main() {
             thread::sleep(std::time::Duration::from_millis(250));
         }
         return;
+    }
+    // `relay-desktop send <file>...` → push file(s) to the connected phone via the running receiver.
+    if argv.get(1).map(|s| s.as_str()) == Some("send") {
+        let files = &argv[2..];
+        if files.is_empty() {
+            eprintln!("usage: relay-desktop send <file>...");
+            std::process::exit(2);
+        }
+        let mut rc = 0;
+        for f in files {
+            match std::fs::read(f) {
+                Ok(data) => {
+                    let name = std::path::Path::new(f).file_name().and_then(|s| s.to_str()).unwrap_or("file");
+                    match cli_send_file(name, &data) {
+                        Ok(200) => println!("sent {name} → phone ({} bytes)", data.len()),
+                        Ok(code) => { eprintln!("relay: receiver returned {code} — is your phone connected to Relay?"); rc = 1; }
+                        Err(e) => { eprintln!("relay: {e} — is relay-desktop running?"); rc = 1; }
+                    }
+                }
+                Err(e) => { eprintln!("relay: can't read {f}: {e}"); rc = 1; }
+            }
+        }
+        std::process::exit(rc);
     }
 
     let mut port: u16 = 47600;
@@ -938,8 +1007,21 @@ fn serve_ui(port: u16, status: Shared) {
             return;
         }
     };
-    for req in server.incoming_requests() {
-        if req.url().starts_with("/status") {
+    for mut req in server.incoming_requests() {
+        if req.url().starts_with("/send") {
+            // Desktop→phone: body = file bytes, X-Filename header = name. Used by the CLI and drop zone.
+            let name = req.headers().iter()
+                .find(|h| h.field.equiv("X-Filename"))
+                .map(|h| h.value.as_str().to_string())
+                .unwrap_or_else(|| "file".to_string());
+            let mut body = Vec::new();
+            let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+            let resp = match push_file_to_phone(&name, &body, &status) {
+                Ok(()) => tiny_http::Response::from_string("ok").with_status_code(200),
+                Err(e) => tiny_http::Response::from_string(e).with_status_code(503),
+            };
+            let _ = req.respond(resp);
+        } else if req.url().starts_with("/status") {
             let body = {
                 let s = status.lock().unwrap();
                 let conn = match &s.connected {

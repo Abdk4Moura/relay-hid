@@ -23,6 +23,10 @@ class WifiLink {
     var onClip: ((String) -> Unit)? = null
     /** Called (off the main thread) when the desktop acks a file (ok, name) — ok=false on failure. */
     var onFileAck: ((Boolean, String) -> Unit)? = null
+    /** Desktop→phone transfer: progress (name, 0..100) and completion (name, bytes). */
+    var onFileProgress: ((String, Int) -> Unit)? = null
+    var onFileReceived: ((String, ByteArray) -> Unit)? = null
+    private val incoming = HashMap<Long, Triple<String, Long, java.io.ByteArrayOutputStream>>()
     /** Called (off the main thread) when the link drops *unexpectedly* (not a user disconnect). */
     var onDisconnect: (() -> Unit)? = null
 
@@ -79,6 +83,13 @@ class WifiLink {
                 "clip" -> onClip?.invoke(o.optString("s"))
                 "fileok" -> onFileAck?.invoke(true, o.optString("name"))
                 "fileerr" -> onFileAck?.invoke(false, o.optString("name"))
+                "fstart" -> incoming[o.optLong("id")] = Triple(o.optString("name"), o.optLong("size"), java.io.ByteArrayOutputStream())
+                "fchunk" -> incoming[o.optLong("id")]?.let { (name, size, baos) ->
+                    baos.write(android.util.Base64.decode(o.optString("data"), android.util.Base64.NO_WRAP))
+                    val pct = if (size > 0) (baos.size().toLong() * 100 / size).toInt().coerceAtMost(100) else 0
+                    onFileProgress?.invoke(name, pct)
+                }
+                "fend" -> incoming.remove(o.optLong("id"))?.let { (name, _, baos) -> onFileReceived?.invoke(name, baos.toByteArray()) }
                 else -> {}   // "welcome" and unknowns: ignore
             }
         }

@@ -71,6 +71,9 @@ class RelayController private constructor(private val context: Context) : HidPer
                 else { logEvent("key", "file failed → $name"); postSyncNotification("Couldn’t send file", name) }
             }
         }
+        // desktop→phone file: live progress, then auto-save + tap-to-open
+        wifi.onFileProgress = { name, pct -> main.post { postProgressNotification(name, pct, false) } }
+        wifi.onFileReceived = { name, bytes -> main.post { saveIncomingFile(name, bytes) } }
         // link dropped unexpectedly → reflect it and try to come back automatically
         wifi.onDisconnect = {
             main.post {
@@ -171,6 +174,60 @@ class RelayController private constructor(private val context: Context) : HidPer
     }
     private fun clearProgressNotification() {
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(7002)
+    }
+
+    private val imageExts = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif")
+
+    /** Save a file the desktop pushed: images→Pictures/Relay, everything else→Downloads. */
+    private fun saveIncomingFile(name: String, bytes: ByteArray) {
+        val safe = name.substringAfterLast('/').ifEmpty { "relay-file" }
+        val isImage = safe.substringAfterLast('.', "").lowercase() in imageExts
+        val resolver = context.contentResolver
+        val uri: android.net.Uri? = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val collection = if (isImage) android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    else android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, safe)
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, if (isImage) "Pictures/Relay" else "Download")
+                    put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val u = resolver.insert(collection, values) ?: return@runCatching null
+                resolver.openOutputStream(u)?.use { it.write(bytes) }
+                values.clear(); values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(u, values, null, null)
+                u
+            } else {
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val f = java.io.File(dir, safe); f.writeBytes(bytes); android.net.Uri.fromFile(f)
+            }
+        }.getOrNull()
+        clearProgressNotification()
+        if (uri != null) { logEvent("key", "received $safe (${bytes.size / 1024} KB)"); postFileReceivedNotification(safe, uri) }
+        else { postSyncNotification("Couldn’t save file", safe) }
+    }
+
+    /** Notification for a received file — tapping opens it. */
+    private fun postFileReceivedNotification(name: String, uri: android.net.Uri) {
+        if (!notifySync) return
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(android.app.NotificationChannel("relay_sync", "Relay sync", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+        }
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, context.contentResolver.getType(uri) ?: "*/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val pi = android.app.PendingIntent.getActivity(context, 1, view,
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = android.app.Notification.Builder(context, "relay_sync")
+            .setSmallIcon(com.cadayn.hidinput.R.mipmap.ic_launcher_foreground)
+            .setContentTitle("Received from desktop")
+            .setContentText("$name · tap to open")
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .build()
+        nm.notify(7003, n)
     }
 
     /** Share-target entry: text shared to Relay → desktop clipboard. */
