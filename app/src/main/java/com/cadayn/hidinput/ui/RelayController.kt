@@ -66,6 +66,7 @@ class RelayController private constructor(private val context: Context) : HidPer
         // desktop acked a dropped file → tell the user it landed (or didn't)
         wifi.onFileAck = { ok, name ->
             main.post {
+                clearProgressNotification()
                 if (ok) { logEvent("key", "file delivered → $name"); postSyncNotification("Sent to desktop", "$name → Downloads") }
                 else { logEvent("key", "file failed → $name"); postSyncNotification("Couldn’t send file", name) }
             }
@@ -152,6 +153,26 @@ class RelayController private constructor(private val context: Context) : HidPer
         nm.notify(7001, n)   // fixed id → replaces, so it never piles up
     }
 
+    /** Determinate transfer-progress notification (separate id so it can update live). */
+    private fun postProgressNotification(name: String, pct: Int, sending: Boolean) {
+        if (!notifySync) return
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(android.app.NotificationChannel("relay_xfer", "Relay transfers", android.app.NotificationManager.IMPORTANCE_LOW))
+        }
+        val n = android.app.Notification.Builder(context, "relay_xfer")
+            .setSmallIcon(com.cadayn.hidinput.R.mipmap.ic_launcher_foreground)
+            .setContentTitle(if (sending) "Sending to desktop" else "Receiving")
+            .setContentText("$name · $pct%")
+            .setProgress(100, pct, false)
+            .setOngoing(true)
+            .build()
+        nm.notify(7002, n)
+    }
+    private fun clearProgressNotification() {
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(7002)
+    }
+
     /** Share-target entry: text shared to Relay → desktop clipboard. */
     fun shareText(s: String) {
         if (useWifi && s.isNotEmpty()) { wifi.clip(s); main.post { logEvent("key", "shared text → desktop"); postSyncNotification("Sent to desktop", s.take(80)) } }
@@ -180,10 +201,13 @@ class RelayController private constructor(private val context: Context) : HidPer
             main.post { logEvent("key", "file too big: $name"); postSyncNotification("File too large", "$name is over ${maxMb} MB") }
             return
         }
-        // tell the user it's in flight; the desktop's ack (onFileAck) flips this to “Sent ✓”
-        main.post { logEvent("key", "sending $name (${bytes.size / 1024} KB)…"); postSyncNotification("Sending to desktop…", name) }
-        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-        wifi.file(name, b64)
+        // chunked send with live progress; the desktop's ack (onFileAck) clears it and confirms.
+        main.post { logEvent("key", "sending $name (${bytes.size / 1024} KB)…"); postProgressNotification(name, 0, true) }
+        wifi.sendFileChunked(
+            name, bytes,
+            onProgress = { pct -> main.post { postProgressNotification(name, pct, true) } },
+            onDone = { ok -> if (!ok) main.post { clearProgressNotification(); postSyncNotification("Send interrupted", name) } },
+        )
     }
     val wifiActive get() = useWifi
 

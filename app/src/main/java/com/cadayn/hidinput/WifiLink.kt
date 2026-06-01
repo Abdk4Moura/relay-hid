@@ -104,6 +104,28 @@ class WifiLink {
     fun clip(s: String) = send("""{"t":"clip","s":"${esc(s)}"}""")
     fun file(name: String, b64: String) = send("""{"t":"file","name":"${esc(name)}","data":"$b64"}""")
 
+    @Volatile private var fileSeq = 0L
+    /** Stream a file in chunks (fstart/fchunk/fend) so the desktop can show progress and large
+     *  files don't blow memory in one base64 blob. onProgress is 0..100; onDone(false) = link lost. */
+    fun sendFileChunked(name: String, bytes: ByteArray, onProgress: (Int) -> Unit, onDone: (Boolean) -> Unit) {
+        worker.execute {
+            if (!connected) { onDone(false); return@execute }
+            val id = ++fileSeq
+            writeLine("""{"t":"fstart","id":$id,"name":"${esc(name)}","size":${bytes.size}}""")
+            val chunk = 128 * 1024
+            var off = 0
+            while (off < bytes.size && connected) {
+                val end = minOf(off + chunk, bytes.size)
+                val b64 = android.util.Base64.encodeToString(bytes.copyOfRange(off, end), android.util.Base64.NO_WRAP)
+                writeLine("""{"t":"fchunk","id":$id,"data":"$b64"}""")
+                off = end
+                onProgress(if (bytes.isEmpty()) 100 else (off.toLong() * 100 / bytes.size).toInt())
+            }
+            if (connected) writeLine("""{"t":"fend","id":$id}""")
+            onDone(connected)
+        }
+    }
+
     fun disconnect() {
         intentional = true
         worker.execute { closeQuietly(); connected = false; host = null }
