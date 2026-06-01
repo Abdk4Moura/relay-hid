@@ -117,13 +117,34 @@ private fun ScreenContent(
     when (screen) {
         "pairing" -> com.cadayn.hidinput.ui.screens.PairingScreen(c, onMakeDiscoverable)
         "keyboard" -> com.cadayn.hidinput.ui.screens.KeyboardScreen(c, immersive, onToggleImmersive)
-        "send" -> com.cadayn.hidinput.ui.screens.SendScreen(c)
-        "remote" -> com.cadayn.hidinput.ui.screens.RemoteScreen(c)
+        "send" -> OfflineWrap(c, onConnect = { onNav("pairing") }) { com.cadayn.hidinput.ui.screens.SendScreen(c) }
+        "remote" -> OfflineWrap(c, onConnect = { onNav("pairing") }) { com.cadayn.hidinput.ui.screens.RemoteScreen(c) }
         "dashboard" -> com.cadayn.hidinput.ui.screens.DashboardScreen(
             c, onOpenKeyboard = { onNav("keyboard") }, onConnect = { onNav("pairing") })
         "settings" -> com.cadayn.hidinput.ui.screens.SettingsScreen(c)
         "customize" -> com.cadayn.hidinput.ui.screens.CustomizeScreen(c)
         else -> Unit
+    }
+}
+
+/** Shows a tappable "not connected" banner above a screen whose actions silently no-op offline. */
+@Composable
+private fun OfflineWrap(c: RelayController, onConnect: () -> Unit, content: @Composable () -> Unit) {
+    val col = Relay.colors
+    Column(Modifier.fillMaxSize()) {
+        if (!c.online) {
+            Row(
+                Modifier.fillMaxWidth().background(col.warn.copy(alpha = 0.14f))
+                    .clickable(onClick = onConnect).padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(Modifier.size(7.dp).clip(RoundedCornerShape(4.dp)).background(col.warn))
+                Text("Not connected — keystrokes won’t be sent. Tap to connect.",
+                    style = Relay.type.body.copy(color = col.warn, fontSize = 12.sp), modifier = Modifier.weight(1f))
+                Text("Connect", style = Relay.type.label.copy(color = col.warn, fontSize = 12.sp))
+            }
+        }
+        Box(Modifier.weight(1f)) { content() }
     }
 }
 

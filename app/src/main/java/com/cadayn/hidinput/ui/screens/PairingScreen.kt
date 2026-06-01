@@ -1,8 +1,10 @@
 package com.cadayn.hidinput.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -142,6 +144,7 @@ private fun StatusChip(c: RelayController) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
     val col = Relay.colors
@@ -151,6 +154,7 @@ private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
     val isConnecting = c.connecting != null && (c.connecting == d.wifiHost || c.connecting == d.name)
     var pinOpen by remember { mutableStateOf(false) }
     var pin by remember { mutableStateOf("") }
+    var forgetOpen by remember { mutableStateOf(false) }
 
     val subtitle = when {
         d.bt != null && d.wifiHost != null -> "Wi-Fi · ${d.wifiHost}  ·  Bluetooth ready"
@@ -163,13 +167,16 @@ private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
             .border(1.dp, if (connected) col.accentDim else col.border, shape),
     ) {
         Row(
-            Modifier.fillMaxWidth().height(72.dp).clickable {
-                when {
-                    connected || isConnecting -> {}
-                    d.needsPin && d.bt == null -> pinOpen = !pinOpen
-                    else -> c.connectBest(d)
-                }
-            }.padding(horizontal = 16.dp),
+            Modifier.fillMaxWidth().height(72.dp).combinedClickable(
+                onLongClick = { forgetOpen = !forgetOpen },
+                onClick = {
+                    when {
+                        connected || isConnecting -> {}
+                        d.needsPin && d.bt == null -> pinOpen = !pinOpen
+                        else -> c.connectBest(d)
+                    }
+                },
+            ).padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp),
         ) {
             Box(
@@ -207,6 +214,16 @@ private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
             ) {
                 WifiField(pin, "PIN", Modifier.weight(1f)) { pin = it.take(8) }
                 RelayButton("Connect", { if (pin.isNotBlank()) { c.connectBest(d, pin.trim()); pinOpen = false } }, kind = BtnKind.Primary)
+            }
+        }
+        if (forgetOpen) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Hide this device?", style = Relay.type.sub.copy(fontSize = 12.sp), color = col.textDim, modifier = Modifier.weight(1f))
+                RelayButton("Cancel", { forgetOpen = false }, kind = BtnKind.Ghost)
+                RelayButton("Hide", { c.forgetDevice(d); forgetOpen = false }, kind = BtnKind.Secondary)
             }
         }
     }

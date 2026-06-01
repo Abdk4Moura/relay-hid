@@ -252,11 +252,26 @@ class RelayController private constructor(private val context: Context) : HidPer
         return cls !in audioClasses
     }
 
+    // Devices the user chose to hide from the list (clutter like spare BT bonds). Keyed by normName.
+    private fun hiddenDevices(): MutableSet<String> =
+        prefs.getStringSet("hiddenDevices", emptySet())!!.toMutableSet()
+
+    /** Hide a device from the Relay list (and forget any saved WiFi PIN for it). Reversible via reset. */
+    fun forgetDevice(d: UiDevice) {
+        val hidden = hiddenDevices(); hidden.add(normName(d.name))
+        prefs.edit().putStringSet("hiddenDevices", hidden).apply()
+        d.wifiHost?.let { prefs.edit().remove("wifipin_$it").apply() }
+        if (isConnectedDevice(d)) { if (d.wifiHost != null) wifiDisconnect() }
+    }
+    fun unhideAllDevices() { prefs.edit().remove("hiddenDevices").apply() }
+
     /** Merge bonded Bluetooth devices with discovered/saved WiFi desktops, deduped by hostname. */
     fun unifiedDevices(): List<UiDevice> {
+        val hidden = hiddenDevices()
         val out = LinkedHashMap<String, UiDevice>()
         for (d in pairedDevices.filter { isLikelyTarget(it) }) {
             val nm = safeName(d) ?: d.address
+            if (normName(nm) in hidden) continue
             out[normName(nm)] = UiDevice(nm, d, null)
         }
         // discovered desktops (live on the LAN) + the last-used host even if not currently seen.
@@ -274,6 +289,7 @@ class RelayController private constructor(private val context: Context) : HidPer
         prefs.getString("lastWifiHost", null)?.let { saved -> if (saved !in byIp) consider(saved, saved, prefs.getInt("lastWifiPort", 47600)) }
         for ((ip, w) in byIp) {
             val k = normName(w.first)
+            if (k in hidden && out[k] == null) continue   // hidden wifi-only device
             val pinSaved = wifiPinFor(ip).isNotEmpty()
             val existing = out[k]
             out[k] = existing?.copy(wifiHost = ip, wifiPort = w.third, wifiPinSaved = pinSaved)
