@@ -20,13 +20,18 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,6 +90,56 @@ fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit) {
                 items(devices) { d -> DeviceEntry(c, d) }
             }
         }
+
+        Spacer(Modifier.height(22.dp))
+        WifiPanel(c)
+    }
+}
+
+@Composable
+private fun WifiPanel(c: RelayController) {
+    val col = Relay.colors
+    var ip by remember { mutableStateOf(c.wifiHost ?: "") }
+    var pin by remember { mutableStateOf("") }
+    Column(
+        Modifier.fillMaxWidth().widthIn(max = 540.dp).clip(RoundedCornerShape(16.dp)).background(col.surface)
+            .border(1.dp, if (c.wifiConnected) col.accentDim else col.border, RoundedCornerShape(16.dp)).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("WiFi · Desktop (Linux)")
+            if (c.wifiConnected) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(col.accent))
+                Text("connected", style = Relay.type.label.copy(color = col.accent, fontSize = 12.sp))
+            }
+        }
+        TText("Run the relay-desktop receiver on your computer, then enter its LAN IP + PIN.",
+            Relay.type.sub.copy(fontSize = 12.sp), col.textFaint)
+        if (!c.wifiConnected) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                WifiField(ip, "192.168.x.x", Modifier.weight(2f)) { ip = it.filter { ch -> ch.isDigit() || ch == '.' } }
+                WifiField(pin, "PIN", Modifier.weight(1f)) { pin = it.take(8) }
+            }
+            RelayButton("Connect", { if (ip.isNotBlank()) c.wifiConnect(ip.trim(), 47600, pin.trim()) }, kind = BtnKind.Primary)
+        } else {
+            Text("→ ${c.wifiHost}  ·  input now goes over WiFi", style = Relay.type.mono.copy(color = col.textDim, fontSize = 12.5.sp))
+            RelayButton("Disconnect", { c.wifiDisconnect() }, kind = BtnKind.Secondary)
+        }
+    }
+}
+
+@Composable
+private fun WifiField(value: String, hint: String, modifier: Modifier, onChange: (String) -> Unit) {
+    val col = Relay.colors
+    Box(
+        modifier.clip(RoundedCornerShape(10.dp)).background(col.bgDeep)
+            .border(1.dp, col.border, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 11.dp),
+    ) {
+        BasicTextField(
+            value = value, onValueChange = onChange, singleLine = true,
+            textStyle = Relay.type.mono.copy(color = col.text, fontSize = 14.sp), cursorBrush = SolidColor(col.accent),
+            decorationBox = { inner -> if (value.isEmpty()) Text(hint, style = Relay.type.mono.copy(color = col.textFaint, fontSize = 14.sp)); inner() },
+        )
     }
 }
 

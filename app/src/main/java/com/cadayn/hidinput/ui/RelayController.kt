@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.cadayn.hidinput.HidConstants
 import com.cadayn.hidinput.HidPeripheralManager
+import com.cadayn.hidinput.WifiLink
 import com.cadayn.hidinput.ui.theme.AccentHue
 
 /** Connection lifecycle the UI cares about. */
@@ -29,7 +30,26 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     private val prefs = context.getSharedPreferences("relay", Context.MODE_PRIVATE)
     private val main = Handler(Looper.getMainLooper())
     private val hid = HidPeripheralManager.getInstance(context).also { it.listener = this }
+    private val wifi = WifiLink()
     private var seq = 0L
+
+    // ---- transport (bt = HID, wifi = desktop receiver) ----
+    var transport by mutableStateOf("bt"); private set
+    var wifiConnected by mutableStateOf(false); private set
+    var wifiHost by mutableStateOf<String?>(null); private set
+    private var wifiBtn = 0
+    private val useWifi get() = transport == "wifi" && wifi.connected
+
+    fun wifiConnect(ip: String, port: Int, pin: String) {
+        wifi.connect(ip, port, pin) { ok ->
+            main.post {
+                wifiConnected = ok
+                transport = if (ok) "wifi" else "bt"
+                if (ok) { wifiHost = ip; logEvent("click", "WiFi → $ip") }
+            }
+        }
+    }
+    fun wifiDisconnect() { wifi.disconnect(); wifiConnected = false; wifiHost = null; transport = "bt"; wifiBtn = 0 }
 
     // ---- navigation / onboarding ----
     var onboarded by mutableStateOf(prefs.getBoolean("onboarded", false)); private set
@@ -119,9 +139,22 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     }.getOrDefault(0)
 
     // ---- input ----
-    fun tapKey(modifier: Int, keycode: Int) = hid.tapKey(modifier, keycode)
-    fun mouseMove(dx: Int, dy: Int, wheel: Int = 0, buttons: Int = 0) =
-        hid.sendMouseMove(dx, dy, wheel, buttons)
+    fun tapKey(modifier: Int, keycode: Int) {
+        if (useWifi) wifi.key(modifier, keycode) else hid.tapKey(modifier, keycode)
+    }
+    fun mouseMove(dx: Int, dy: Int, wheel: Int = 0, buttons: Int = 0) {
+        if (useWifi) {
+            if (dx != 0 || dy != 0) wifi.move(dx, dy)
+            if (wheel != 0) wifi.scroll(wheel)
+            if (buttons != wifiBtn) {
+                val changed = buttons xor wifiBtn
+                if (changed and HidConstants.MOUSE_LEFT != 0) wifi.button("left", buttons and HidConstants.MOUSE_LEFT != 0)
+                if (changed and HidConstants.MOUSE_RIGHT != 0) wifi.button("right", buttons and HidConstants.MOUSE_RIGHT != 0)
+                if (changed and HidConstants.MOUSE_MIDDLE != 0) wifi.button("middle", buttons and HidConstants.MOUSE_MIDDLE != 0)
+                wifiBtn = buttons
+            }
+        } else hid.sendMouseMove(dx, dy, wheel, buttons)
+    }
 
     /** "Find pointer": jiggle the cursor left↔right so the host enlarges it and it's easy to spot. */
     fun findPointer() {
@@ -188,16 +221,20 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     fun updateVolumeKeys(v: String) { volumeKeys = v; prefs.edit().putString("volumeKeys", v).apply() }
 
     /** Used by the volume-key remap in MainActivity. */
-    fun scroll(amount: Int) = hid.sendMouseMove(0, 0, amount, 0)
+    fun scroll(amount: Int) = mouseMove(0, 0, amount, 0)
     fun click(right: Boolean = false) {
         val b = if (right) HidConstants.MOUSE_RIGHT else HidConstants.MOUSE_LEFT
-        hid.sendMouseMove(0, 0, 0, b); hid.sendMouseMove(0, 0, 0, 0)
+        mouseMove(0, 0, 0, b); mouseMove(0, 0, 0, 0)
     }
-    fun tapKeycode(keycode: Int) = hid.tapKey(0, keycode)
-    fun consumer(usage: Int) = hid.sendConsumer(usage)
+    fun tapKeycode(keycode: Int) = tapKey(0, keycode)
+    fun consumer(usage: Int) { if (useWifi) wifi.consumer(usage) else hid.sendConsumer(usage) }
 
     /** Replay a whole string as keystrokes (Type & Send / snippets / paste). */
-    fun typeText(s: String) { if (s.isNotEmpty()) { hid.typeText(s); logEvent("key", "typed ${s.length} chars") } }
+    fun typeText(s: String) {
+        if (s.isEmpty()) return
+        if (useWifi) wifi.text(s) else hid.typeText(s)
+        logEvent("key", "typed ${s.length} chars")
+    }
 
     /** Current phone clipboard text (for paste-to-host). */
     fun clipboardText(): String {
