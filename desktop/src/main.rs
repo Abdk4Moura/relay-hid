@@ -243,8 +243,17 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
     note(st, |s| { s.connected = None; s.last = "idle".into(); s.tx = None; });
 }
 
-// ----------------------------- clipboard (via xsel / Xwayland) -----------------------------
+// ----------------------------- clipboard -----------------------------
+// Prefer the native WAYLAND clipboard (what COSMIC/GNOME apps actually use); fall back to
+// xsel (X11/Xwayland) only if the Wayland data-control protocol isn't available.
 fn set_clip(s: &str) {
+    use wl_clipboard_rs::copy::{MimeType, Options, Source};
+    if Options::new()
+        .copy(Source::Bytes(s.as_bytes().to_vec().into_boxed_slice()), MimeType::Text)
+        .is_ok()
+    {
+        return;
+    }
     use std::process::Stdio;
     if let Ok(mut child) = Command::new("xsel").args(["-b", "-i"]).stdin(Stdio::piped()).spawn() {
         if let Some(mut si) = child.stdin.take() {
@@ -287,6 +296,18 @@ fn save_file(name: &str, b64: &str, st: &Shared) {
 }
 
 fn get_clip() -> String {
+    use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType, Seat};
+    match get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
+        Ok((mut reader, _)) => {
+            let mut s = String::new();
+            let _ = std::io::Read::read_to_string(&mut reader, &mut s);
+            return s;
+        }
+        // empty / no text mime → just empty, don't fall back (Wayland is working)
+        Err(wl_clipboard_rs::paste::Error::ClipboardEmpty)
+        | Err(wl_clipboard_rs::paste::Error::NoMimeType) => return String::new(),
+        Err(_) => {} // protocol unavailable → try X11
+    }
     Command::new("xsel")
         .args(["-b", "-o"])
         .output()
@@ -324,6 +345,20 @@ fn clipboard_sync_loop(status: Shared) {
 }
 
 fn main() {
+    // clipboard debug/utility flags (no server needed)
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.iter().any(|a| a == "--paste") {
+        print!("{}", get_clip());
+        return;
+    }
+    if let Some(i) = argv.iter().position(|a| a == "--copy") {
+        if let Some(t) = argv.get(i + 1) {
+            set_clip(t);
+            thread::sleep(std::time::Duration::from_millis(250));
+        }
+        return;
+    }
+
     let mut port: u16 = 47600;
     let mut token: Option<String> = None;
     let mut args = std::env::args().skip(1);
