@@ -85,6 +85,31 @@ Then just ask the agent: *"screenshot the target, open Settings, and turn on dar
 call the tools in a loop. Config (`RELAY_PIN`, `MOUSE_MODE`, `SCREEN_SOURCE`, …) is read from
 `.env` next to the server.
 
+## Independent cursor (let the agent have its own pointer)
+When the relay injects into your **local** machine, it normally drives the one system pointer —
+so the agent fights your mouse. To give the agent its **own** cursor that moves independently:
+
+**X11 — fully supported (Multi-Pointer X / XInput2).** The relay's virtual devices get reattached
+to a dedicated `Relay Agent` master pointer, which has its own cursor *and* its own keyboard
+focus. You keep using your mouse while the agent operates a different window.
+```bash
+# relay-desktop must be running first (so its virtual devices exist)
+tools/agent_pointer_x11.sh            # create the "Relay Agent" pointer + attach the relay devices
+tools/agent_pointer_x11.sh --remove   # tear down
+```
+*Distinct cursor sprite (optional):* the agent cursor is already obvious because it moves on its
+own; to also recolor/enlarge it, set a per-pointer cursor via XInput2 `XIDefineCursor` (no stock
+CLI — a small ctypes/libXi helper; ask if you want it added).
+
+**Wayland (e.g. COSMIC/GNOME) — not natively possible.** Wayland gives the seat a single pointer;
+there's no MPX, so you can't have a second independent OS cursor in the same session. Options:
+- **Nested session** — run a nested compositor / `Xephyr` in a window; the agent controls *that*
+  session (its own cursor) while your real desktop is untouched. Best isolation; needs the
+  injection + capture pointed at the nested display rather than global `uinput`.
+- **VM / second session** — drive a Linux VM (or another VT/user session); it has its own cursor.
+- **Out-of-band** — `SCREEN_SOURCE=capture` + HID to a *separate* machine: that machine has its
+  own cursor by definition (the cleanest separation, zero software on the target).
+
 ## Files
 | file | role |
 |------|------|
@@ -97,6 +122,7 @@ call the tools in a loop. Config (`RELAY_PIN`, `MOUSE_MODE`, `SCREEN_SOURCE`, �
 | `mcp_server.py` | **MCP server**: relay as `screenshot`/`click`/`type_text`/… tools for any MCP agent |
 | `run.py` | CLI entry point (standalone Gemini/Claude loop) |
 | `tools/demo.py` | model-free pipeline smoke test |
+| `tools/agent_pointer_x11.sh` | X11 MPX: give the relay its own independent `Relay Agent` cursor |
 
 ## Notes / limits
 - The provider files are the glue to the live SDKs; if an installed SDK names a field

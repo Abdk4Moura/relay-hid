@@ -405,7 +405,7 @@ private fun RowScope.ThumbItem(
     when (tk) {
         is TK.Ch -> if (tk.ne != null || tk.nw != null || tk.se != null || tk.sw != null)
             ThumbCharKey(tk, shift, caps, c.haptics, c.slideAnim, view, c.keyRepeat, onChar)
-        else ThumbCap(thumbDisplay(tk.c, shift, caps), tk.w, action = false, armed = false, c.haptics) { onChar(tk.c) }
+        else ThumbCap(thumbDisplay(tk.c, shift, caps), tk.w, action = false, armed = false, c.haptics, repeat = c.keyRepeat) { onChar(tk.c) }
         is TK.Act -> if (tk.id == "space")
             SpaceKey(tk.w, sculpted = c.keycap == "sculpted", haptic = c.haptics, sensitivity = c.sensitivity, accel = c.accel, sideBias = c.sideBias, onSpace = { onSpecial("space") }, onArrow = onSpecial)
         else ThumbCap(if (tk.id == "shift" && caps) "⇪" else tk.show, tk.w, action = true, armed = tk.id == "shift" && (shift || caps), c.haptics, repeat = tk.id == "bksp") {
