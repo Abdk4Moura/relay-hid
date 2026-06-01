@@ -47,8 +47,10 @@ sudo usermod -aG input $USER     # log out / back in for the group to take effec
 ./target/release/relay-desktop --token 1234 --port 47600
 ```
 
-It prints the **PIN** and port. In the Relay app, switch to **WiFi mode**, enter
-this machine's **LAN IP** + the **PIN**, and connect.
+On launch it opens a **control panel** in your browser (`http://127.0.0.1:47601`)
+showing the PIN, this machine's IP, a live connection indicator, and an injected-event
+counter. In the Relay app, switch to **WiFi mode**, enter this machine's **IP** + the
+**PIN**, and connect. (The terminal also prints the PIN/port if you have no browser.)
 
 ## Protocol (for the app side)
 

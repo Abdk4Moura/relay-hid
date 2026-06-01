@@ -20,6 +20,9 @@
 
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use evdev::{
@@ -41,6 +44,17 @@ enum Msg {
 }
 
 const SYN: i32 = 0; // SYN_REPORT
+
+/// Shared state surfaced to the web control panel.
+struct Status {
+    port: u16,
+    pin: String,
+    ip_hint: String,
+    connected: Option<String>,
+    events: u64,
+    last: String,
+}
+type Shared = Arc<Mutex<Status>>;
 
 struct Injector {
     dev: evdev::uinput::VirtualDevice,
@@ -151,7 +165,13 @@ impl Injector {
     }
 }
 
-fn handle(stream: TcpStream, token: &str, inj: &mut Injector) {
+fn note(st: &Shared, f: impl FnOnce(&mut Status)) {
+    if let Ok(mut s) = st.lock() {
+        f(&mut s);
+    }
+}
+
+fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
     let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
     let mut authed = false;
     let reader = BufReader::new(stream);
@@ -172,6 +192,7 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector) {
                 Msg::Hello { token: t } if t == token => {
                     authed = true;
                     println!("✓ {peer} authenticated");
+                    note(st, |s| { s.connected = Some(peer.clone()); s.last = "connected".into(); });
                     continue;
                 }
                 _ => {
@@ -180,6 +201,16 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector) {
                 }
             }
         }
+        let desc = match &msg {
+            Msg::Text { s } => format!("type \"{}\"", s.chars().take(24).collect::<String>()),
+            Msg::Key { code, mods } => format!("key 0x{code:02x} mods 0x{mods:02x}"),
+            Msg::Move { .. } => "move".into(),
+            Msg::Scroll { .. } => "scroll".into(),
+            Msg::Button { b, down } => format!("{b} {}", if *down { "down" } else { "up" }),
+            Msg::Click { b } => format!("{b} click"),
+            Msg::Consumer { usage } => format!("media 0x{usage:02x}"),
+            Msg::Hello { .. } => String::new(),
+        };
         match msg {
             Msg::Text { s } => inj.text(&s),
             Msg::Key { code, mods } => inj.tap_hid(code, mods),
@@ -190,8 +221,12 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector) {
             Msg::Consumer { usage } => inj.consumer(usage),
             Msg::Hello { .. } => {}
         }
+        if !desc.is_empty() {
+            note(st, |s| { s.events += 1; s.last = desc; });
+        }
     }
     println!("— {peer} disconnected");
+    note(st, |s| { s.connected = None; s.last = "idle".into(); });
 }
 
 fn main() {
@@ -226,17 +261,98 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    let status: Shared = Arc::new(Mutex::new(Status {
+        port,
+        pin: token.clone(),
+        ip_hint: ip_hint(),
+        connected: None,
+        events: 0,
+        last: "idle".into(),
+    }));
+
+    // local web control panel
+    let ui_port = port.wrapping_add(1);
+    {
+        let st = status.clone();
+        thread::spawn(move || serve_ui(ui_port, st));
+    }
+    let ui_url = format!("http://127.0.0.1:{ui_port}");
+    let _ = Command::new("xdg-open").arg(&ui_url).spawn();
+
     println!("┌─────────────────────────────────────────");
     println!("│ Relay desktop receiver");
     println!("│ Listening on 0.0.0.0:{port}");
     println!("│ PIN: {token}");
-    println!("│ Enter this host's LAN IP + PIN in the Relay app.");
+    println!("│ Control panel: {ui_url}");
+    println!("│ In the Relay app enter this host's IP + the PIN.");
     println!("└─────────────────────────────────────────");
 
     for stream in listener.incoming() {
         match stream {
-            Ok(s) => handle(s, &token, &mut inj),
+            Ok(s) => handle(s, &token, &mut inj, &status),
             Err(e) => eprintln!("accept error: {e}"),
+        }
+    }
+}
+
+/// Best-effort LAN/Tailscale IP to show in the panel (Tailscale first, then hostname -I).
+fn ip_hint() -> String {
+    if let Ok(o) = Command::new("tailscale").args(["ip", "-4"]).output() {
+        if let Some(ip) = String::from_utf8_lossy(&o.stdout).split_whitespace().next() {
+            if !ip.is_empty() {
+                return ip.to_string();
+            }
+        }
+    }
+    if let Ok(o) = Command::new("hostname").arg("-I").output() {
+        if let Some(ip) = String::from_utf8_lossy(&o.stdout).split_whitespace().next() {
+            return ip.to_string();
+        }
+    }
+    "your-ip".to_string()
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c if (c as u32) < 0x20 => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn serve_ui(port: u16, status: Shared) {
+    let server = match tiny_http::Server::http(("127.0.0.1", port)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("control panel failed to start on :{port}: {e}");
+            return;
+        }
+    };
+    for req in server.incoming_requests() {
+        if req.url().starts_with("/status") {
+            let body = {
+                let s = status.lock().unwrap();
+                let conn = match &s.connected {
+                    Some(c) => format!("\"{}\"", json_escape(c)),
+                    None => "null".to_string(),
+                };
+                format!(
+                    "{{\"port\":{},\"pin\":\"{}\",\"ip\":\"{}\",\"connected\":{},\"events\":{},\"last\":\"{}\"}}",
+                    s.port, json_escape(&s.pin), json_escape(&s.ip_hint), conn, s.events, json_escape(&s.last)
+                )
+            };
+            let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
+            let _ = req.respond(tiny_http::Response::from_string(body).with_header(header));
+        } else {
+            let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
+            let _ = req.respond(tiny_http::Response::from_string(INDEX_HTML).with_header(header));
         }
     }
 }
@@ -378,6 +494,62 @@ fn char_to_key(c: char) -> Option<(Key, bool)> {
         _ => return None,
     })
 }
+
+const INDEX_HTML: &str = r##"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay · Desktop</title>
+<style>
+  :root{--bg:#0a0d0c;--surface:#121614;--border:#1f2724;--text:#e7ecea;--dim:#8a9691;--faint:#5a655f;--accent:#65ea92;--accent2:#4fb772}
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,'Segoe UI',Roboto,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+  .card{width:100%;max-width:440px;background:linear-gradient(180deg,var(--surface),var(--bg));border:1px solid var(--border);border-radius:18px;padding:26px}
+  .top{display:flex;align-items:center;gap:11px;margin-bottom:22px}
+  .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(160deg,var(--accent),var(--accent2))}
+  .brand{font-weight:700;letter-spacing:.16em;font-size:14px}
+  .ver{font-family:ui-monospace,monospace;font-size:10px;color:var(--faint);background:#0c100e;border:1px solid var(--border);border-radius:5px;padding:2px 6px}
+  .pill{margin-left:auto;display:flex;align-items:center;gap:8px;background:#0c100e;border:1px solid var(--border);border-radius:9px;padding:6px 11px;font-size:12.5px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--faint);transition:.3s}
+  .dot.on{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .lbl{font-family:ui-monospace,monospace;font-size:10px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase;margin-bottom:8px}
+  .pinbox{background:#0c100e;border:1px solid var(--border);border-radius:13px;padding:18px;display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .pin{font-family:ui-monospace,monospace;font-size:38px;font-weight:700;letter-spacing:.14em;color:var(--accent)}
+  .copy{background:var(--surface);border:1px solid var(--border);color:var(--dim);border-radius:9px;padding:8px 12px;font-size:12px;cursor:pointer}
+  .copy:active{background:var(--border)}
+  .row{display:flex;gap:12px;margin-bottom:16px}
+  .stat{flex:1;background:#0c100e;border:1px solid var(--border);border-radius:12px;padding:13px}
+  .stat .v{font-family:ui-monospace,monospace;font-size:17px;font-weight:600}
+  .stat .k{font-size:11px;color:var(--faint);margin-top:4px}
+  .hint{font-size:12.5px;color:var(--dim);line-height:1.55;background:#0c100e;border:1px solid var(--border);border-radius:12px;padding:14px}
+  .hint b{color:var(--text);font-family:ui-monospace,monospace}
+  .last{font-family:ui-monospace,monospace;font-size:11px;color:var(--faint);margin-top:14px;text-align:center;min-height:14px}
+</style></head>
+<body><div class="card">
+  <div class="top"><div class="logo"></div><div class="brand">RELAY</div><div class="ver">desktop</div>
+    <div class="pill"><span class="dot" id="dot"></span><span id="conn">waiting…</span></div></div>
+  <div class="lbl">Pairing PIN</div>
+  <div class="pinbox"><span class="pin" id="pin">····</span><button class="copy" id="copy">copy</button></div>
+  <div class="row">
+    <div class="stat"><div class="v" id="events">0</div><div class="k">events injected</div></div>
+    <div class="stat"><div class="v" id="port">—</div><div class="k">port</div></div>
+  </div>
+  <div class="hint">In the Relay app → <b>Pairing → WiFi</b>, enter this machine's IP <b id="ip">…</b> and the PIN above.</div>
+  <div class="last" id="last"></div>
+</div>
+<script>
+  async function tick(){
+    try{
+      const s = await (await fetch('/status')).json();
+      pin.textContent = s.pin; port.textContent = s.port; ip.textContent = s.ip;
+      events.textContent = s.events;
+      const c = s.connected;
+      dot.classList.toggle('on', !!c);
+      conn.textContent = c ? ('connected · ' + c.split(':')[0]) : 'waiting for phone';
+      last.textContent = s.last ? ('last: ' + s.last) : '';
+    }catch(e){ conn.textContent='receiver offline'; dot.classList.remove('on'); }
+  }
+  copy.onclick=()=>{navigator.clipboard.writeText(pin.textContent);copy.textContent='copied';setTimeout(()=>copy.textContent='copy',1200)};
+  tick(); setInterval(tick, 1000);
+</script></body></html>"##;
 
 /// Every key the virtual device must declare it can emit.
 fn all_keys() -> Vec<Key> {
