@@ -55,6 +55,36 @@ python run.py --provider gemini    --goal "Open the file manager and create a fo
 python run.py --provider anthropic --goal "Open a terminal and run: uname -a"
 ```
 
+## 3. Use it as an MCP server (recommended)
+`mcp_server.py` exposes the relay as computer-use **tools** (`screenshot`, `click`, `type_text`,
+`key`, `scroll`, `drag`, `move`, `wait`). The connecting agent's **own model** becomes the brain
+— it calls `screenshot` to see the target and the action tools to drive it. No second API key,
+no provider loop: any MCP-capable agent gains computer use over your HID relay.
+
+Coordinates are in the pixel space of the most recent `screenshot` (its dimensions are returned
+with the image). The model should `screenshot`, act, then `screenshot` again.
+
+**Claude Code:**
+```bash
+claude mcp add hid-computer-use -- /abs/path/to/agent/.venv/bin/python /abs/path/to/agent/mcp_server.py
+```
+
+**Antigravity CLI (`agy`)** — add to its MCP config (e.g. `~/.antigravity/mcp.json` or via the
+panel), pointing at the venv python so deps resolve:
+```json
+{
+  "mcpServers": {
+    "hid-computer-use": {
+      "command": "/abs/path/to/agent/.venv/bin/python",
+      "args": ["/abs/path/to/agent/mcp_server.py"]
+    }
+  }
+}
+```
+Then just ask the agent: *"screenshot the target, open Settings, and turn on dark mode."* It will
+call the tools in a loop. Config (`RELAY_PIN`, `MOUSE_MODE`, `SCREEN_SOURCE`, …) is read from
+`.env` next to the server.
+
 ## Files
 | file | role |
 |------|------|
@@ -64,7 +94,8 @@ python run.py --provider anthropic --goal "Open a terminal and run: uname -a"
 | `screen.py` | pluggable capture: `LocalScreen` (mss) / `CaptureCard` (ffmpeg/v4l2) |
 | `providers/gemini.py` | Gemini 2.5 Computer Use loop (browser-only fns excluded) |
 | `providers/anthropic.py` | Claude Computer Use loop (alternative) |
-| `run.py` | CLI entry point |
+| `mcp_server.py` | **MCP server**: relay as `screenshot`/`click`/`type_text`/… tools for any MCP agent |
+| `run.py` | CLI entry point (standalone Gemini/Claude loop) |
 | `tools/demo.py` | model-free pipeline smoke test |
 
 ## Notes / limits

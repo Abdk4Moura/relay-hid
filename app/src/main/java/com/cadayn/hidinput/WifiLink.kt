@@ -35,12 +35,22 @@ class WifiLink {
                 s.connect(InetSocketAddress(ip, port), 3000)
                 s.tcpNoDelay = true
                 s.keepAlive = true
-                out = s.getOutputStream()
+                val o = s.getOutputStream()
+                o.write(("""{"t":"hello","token":"${esc(token)}"}""" + "\n").toByteArray(Charsets.UTF_8))
+                o.flush()
+                // Wait briefly for the desktop's auth confirmation. A closed socket (EOF) means the
+                // PIN was rejected → fail. A line (welcome/data) means accepted. A timeout means an
+                // older receiver that doesn't ack — assume accepted (the link is still open).
+                s.soTimeout = 4000
+                val br = s.getInputStream().bufferedReader()
+                val first = try { br.readLine() } catch (_: java.net.SocketTimeoutException) { "" }
+                if (first == null) throw java.io.IOException("rejected") // EOF → bad PIN / dropped
+                s.soTimeout = 0
+                out = o
                 socket = s
                 host = ip
-                writeLine("""{"t":"hello","token":"${esc(token)}"}""")
                 connected = true
-                startReader(s)
+                startReader(s, br, first)
                 startHeartbeat()
                 onResult(true)
             } catch (e: Exception) {
@@ -61,23 +71,28 @@ class WifiLink {
         }.apply { isDaemon = true }.start()
     }
 
-    /** Reverse channel: read newline-JSON the desktop sends (currently clipboard). */
-    private fun startReader(s: Socket) {
+    private fun handleLine(line: String) {
+        if (line.isBlank()) return
+        runCatching {
+            val o = org.json.JSONObject(line)
+            when (o.optString("t")) {
+                "clip" -> onClip?.invoke(o.optString("s"))
+                "fileok" -> onFileAck?.invoke(true, o.optString("name"))
+                "fileerr" -> onFileAck?.invoke(false, o.optString("name"))
+                else -> {}   // "welcome" and unknowns: ignore
+            }
+        }
+    }
+
+    /** Reverse channel: read newline-JSON the desktop sends. `first` is the line already consumed
+     *  during the auth handshake (may be "welcome", real data, or empty on timeout). */
+    private fun startReader(s: Socket, br: java.io.BufferedReader, first: String?) {
         Thread {
             runCatching {
-                val br = s.getInputStream().bufferedReader()
+                if (!first.isNullOrEmpty()) handleLine(first)
                 while (connected) {
                     val line = br.readLine() ?: break
-                    if (line.isBlank()) continue
-                    runCatching {
-                        val o = org.json.JSONObject(line)
-                        when (o.optString("t")) {
-                            "clip" -> onClip?.invoke(o.optString("s"))
-                            "fileok" -> onFileAck?.invoke(true, o.optString("name"))
-                            "fileerr" -> onFileAck?.invoke(false, o.optString("name"))
-                            else -> {}
-                        }
-                    }
+                    handleLine(line)
                 }
             }
             val wasConnected = connected

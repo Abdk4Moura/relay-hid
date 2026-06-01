@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
     private val requestPerms =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             permsGranted = btGranted()
+            if (::controller.isInitialized) controller.btPermission = permsGranted
             if (permsGranted) startHid()
         }
 
@@ -132,9 +133,13 @@ class MainActivity : ComponentActivity() {
         }
         if (missing.isEmpty()) {
             permsGranted = btGranted()
+            if (::controller.isInitialized) controller.btPermission = permsGranted
             if (permsGranted) startHid()
         } else {
             requestPerms.launch(missing.toTypedArray())
         }
     }
+
+    /** Re-request Bluetooth permissions (used by the in-app banner when previously denied). */
+    fun reRequestPermissions() = ensurePermissions()
 }

@@ -67,6 +67,24 @@ fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit) {
             StatusChip(c)
         }
 
+        // ---- banners: never let a failure or a blocked state be silent ----
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        if (!c.btPermission) {
+            Spacer(Modifier.height(16.dp))
+            Banner("Bluetooth permission needed", "Relay can’t pair without it.", "Grant", col.warn) {
+                (ctx as? com.cadayn.hidinput.MainActivity)?.reRequestPermissions()
+            }
+        } else if (!c.bluetoothOn) {
+            Spacer(Modifier.height(16.dp))
+            Banner("Bluetooth is off", "Turn it on to pair a tablet, phone or TV.", "Settings", col.warn) {
+                runCatching { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)) }
+            }
+        }
+        c.notice?.let { msg ->
+            Spacer(Modifier.height(16.dp))
+            Banner("Couldn’t connect", msg, "Dismiss", col.danger) { c.clearNotice() }
+        }
+
         Spacer(Modifier.height(18.dp))
         if (devices.isEmpty()) {
             EmptyState()
@@ -81,6 +99,27 @@ fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         AddSection(c, onMakeDiscoverable)
         Spacer(Modifier.height(40.dp))
+    }
+}
+
+@Composable
+private fun Banner(title: String, body: String, action: String, accent: androidx.compose.ui.graphics.Color, onAction: () -> Unit) {
+    val col = Relay.colors
+    val shape = RoundedCornerShape(13.dp)
+    Row(
+        Modifier.fillMaxWidth().widthIn(max = 560.dp).clip(shape).background(col.surface)
+            .border(1.dp, accent.copy(alpha = 0.5f), shape).padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Relay.type.body.copy(color = col.text, fontSize = 13.5.sp), maxLines = 1)
+            Text(body, style = Relay.type.sub.copy(fontSize = 11.5.sp), color = col.textFaint)
+        }
+        Box(
+            Modifier.clip(RoundedCornerShape(9.dp)).background(accent.copy(alpha = 0.16f))
+                .clickable(onClick = onAction).padding(horizontal = 12.dp, vertical = 8.dp),
+        ) { Text(action, style = Relay.type.label.copy(color = accent, fontSize = 12.sp)) }
     }
 }
 
@@ -109,6 +148,7 @@ private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
     val shape = RoundedCornerShape(16.dp)
     val connected = c.isConnectedDevice(d)
     val activeWifi = connected && c.activeTransport == "wifi"
+    val isConnecting = c.connecting != null && (c.connecting == d.wifiHost || c.connecting == d.name)
     var pinOpen by remember { mutableStateOf(false) }
     var pin by remember { mutableStateOf("") }
 
@@ -125,7 +165,7 @@ private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
         Row(
             Modifier.fillMaxWidth().height(72.dp).clickable {
                 when {
-                    connected -> {}
+                    connected || isConnecting -> {}
                     d.needsPin && d.bt == null -> pinOpen = !pinOpen
                     else -> c.connectBest(d)
                 }
@@ -146,6 +186,7 @@ private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
                 Text(subtitle, style = Relay.type.mono.copy(color = col.textFaint, fontSize = 11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             when {
+                isConnecting -> Text("connecting…", style = Relay.type.mono.copy(color = col.warn, fontSize = 11.5.sp))
                 connected -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (activeWifi) RelayIcons.Wifi(size = 15.dp, color = col.accent) else RelayIcons.Bluetooth(size = 14.dp, color = col.accent)
                     Text("Connected", style = Relay.type.label.copy(color = col.accent, fontSize = 12.sp))

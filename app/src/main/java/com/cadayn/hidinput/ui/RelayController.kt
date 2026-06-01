@@ -50,6 +50,13 @@ class RelayController private constructor(private val context: Context) : HidPer
     private var wifiBtn = 0
     private val useWifi get() = transport == "wifi" && wifi.connected
 
+    // ---- connection feedback (so failures/progress are never silent) ----
+    var connecting by mutableStateOf<String?>(null); private set   // device id (host or BT name) being connected
+    var notice by mutableStateOf<String?>(null); private set       // transient banner message
+    var btPermission by mutableStateOf(true)                       // set by MainActivity from the perm result
+    fun clearNotice() { notice = null }
+    private fun showNotice(msg: String) { main.post { notice = msg } }
+
     @Volatile private var wantWifi = false          // user intends to be on WiFi (drives auto-reconnect)
     @Volatile private var reconnecting = false
 
@@ -183,14 +190,18 @@ class RelayController private constructor(private val context: Context) : HidPer
     fun wifiConnect(ip: String, port: Int, pin: String) {
         wantWifi = true
         prefs.edit().putBoolean("wifiWanted", true).apply()
+        main.post { connecting = ip; notice = null }
         wifi.connect(ip, port, pin) { ok ->
             main.post {
+                connecting = null
                 wifiConnected = ok
                 transport = if (ok) "wifi" else "bt"
                 if (ok) {
                     wifiHost = ip; saveWifiPin(ip, pin)
                     prefs.edit().putString("lastWifiHost", ip).putInt("lastWifiPort", port).apply()
                     logEvent("click", "WiFi → $ip")
+                } else {
+                    notice = "Couldn’t reach $ip — check the receiver is running and the PIN is right."
                 }
             }
         }
@@ -371,6 +382,8 @@ class RelayController private constructor(private val context: Context) : HidPer
     fun connectTo(device: BluetoothDevice) {
         deviceName = safeName(device)
         conn = ConnState.PAIRING
+        connecting = deviceName
+        notice = null
         hid.connectToHost(device)
     }
 
@@ -529,6 +542,7 @@ class RelayController private constructor(private val context: Context) : HidPer
 
     override fun onConnectionStateChanged(deviceName: String?, connected: Boolean) {
         main.post {
+            connecting = null
             if (connected) {
                 this.deviceName = deviceName
                 conn = ConnState.CONNECTED

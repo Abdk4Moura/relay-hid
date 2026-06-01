@@ -2,6 +2,9 @@
 python-dotenv>=1.0.0
 pillow>=10.0.0
 
+# MCP server (expose the relay as computer-use tools to agy / Claude Code)
+mcp>=1.2.0
+
 # Screen capture — local display grab (omit if you only use a capture card via ffmpeg)
 mss>=9.0.0
 

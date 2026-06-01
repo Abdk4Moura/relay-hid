@@ -295,6 +295,13 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
                     authed = true;
                     if let Some(ip) = ip { clear_pin_fails(fails, ip); }
                     println!("✓ {peer} authenticated");
+                    // Confirm the PIN was accepted so the phone can tell success from a bad PIN
+                    // (a rejected client just gets the socket closed).
+                    if let Some(w) = writer.as_ref() {
+                        let mut t: &TcpStream = w;
+                        let _ = t.write_all(b"{\"t\":\"welcome\"}\n");
+                        let _ = t.flush();
+                    }
                     let w = writer.as_ref().and_then(|s| s.try_clone().ok());
                     note(st, |s| { s.connected = Some(peer.clone()); s.last = "connected".into(); s.tx = w; });
                     continue;
