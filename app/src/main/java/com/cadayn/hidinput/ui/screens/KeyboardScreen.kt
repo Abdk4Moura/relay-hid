@@ -68,8 +68,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
@@ -283,33 +285,18 @@ private fun PortraitThumb(
     val view = LocalView.current
     val rows = when (layer) { Layer.NUM -> THUMB_NUM; Layer.SYM -> THUMB_SYM; Layer.BASE -> THUMB_BASE }
     val pl = c.portraitLayout
+    val oneHand = pl == "onehanded"
     var padFull by remember { mutableStateOf(false) }
     var demoActive by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
-    var pmode by remember { mutableStateOf("keys") }   // sub-mode for the "toggle" portrait layout
-    // Keyboard sits at the BOTTOM (thumb reach); the free area doubles as a trackpad.
+    // One resizable layout: trackpad on top, keyboard below; drag the divider to resize the keys
+    // (up = bigger keys, down = bigger pad; drag it to the floor = full trackpad).
+    val minH = 38f; val maxH = 82f
+    var kh by remember { mutableFloatStateOf(c.keyHeight.coerceIn(minH.toInt(), maxH.toInt()).toFloat()) }
+    var overshoot by remember { mutableFloatStateOf(0f) }
+    val animKh by animateFloatAsState(kh, spring(stiffness = Spring.StiffnessMedium), label = "kh")
     Column(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 10.dp)) {
-      if (!padFull && pl == "toggle") {
-        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.Center) {
-            SegToggle(pmode, listOf("keys" to "⌨  Keyboard", "pad" to "⇡  Trackpad")) { pmode = it }
-        }
-        if (pmode == "pad") {
-            Box(Modifier.fillMaxWidth().weight(1f).then(trackpadCanvas(c)).dragSignal(c.dragStyle, dragging).trackpadGestures(c, view, onDrag = { dragging = it })) {
-                Text("FULL TRACKPAD · drag = move · 2-finger scroll · tap = click", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 9.sp),
-                    modifier = Modifier.align(Alignment.Center))
-            }
-        } else {
-            ModifierBar(c, ctrl, shift, alt, gui, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
-            Spacer(Modifier.height(8.dp))
-            Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(c.keyGap.dp)) {
-                rows.forEach { row ->
-                    Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(c.keyGap.dp)) {
-                        row.forEach { tk -> ThumbItem(c, tk, shift, caps, view, onMod, onChar, onSpecial) }
-                    }
-                }
-            }
-        }
-      } else if (padFull) {
+      if (padFull) {
         var gyroMode by remember { mutableStateOf(false) }
         ModifierBar(c, ctrl, shift, alt, gui, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
         Spacer(Modifier.height(6.dp))
@@ -323,7 +310,7 @@ private fun PortraitThumb(
                     modifier = Modifier.align(Alignment.TopStart).padding(12.dp))
             }
         }
-        DragHandle(onUp = { padFull = false }, onDown = {}, onTap = { padFull = false })
+        DragHandle(onUp = { padFull = false; if (kh < 46f) kh = 52f }, onDown = {}, onTap = { padFull = false; if (kh < 46f) kh = 52f })
         PadButtons(c, gyroMode) { gyroMode = !gyroMode }
       } else {
         // free area is multifunctional: type-preview + trackpad (drag/tap/hold). Long-press the label to demo drag signals.
@@ -356,7 +343,18 @@ private fun PortraitThumb(
             }
         }
         }
-        DragHandle(onUp = {}, onDown = { padFull = true }, onTap = { padFull = true })
+        // draggable divider — resize the keyboard; drag it all the way down to collapse to a full trackpad
+        ResizeHandle(
+            onResize = { dyDp ->
+                val target = kh - dyDp
+                when {
+                    target < minH -> { overshoot += (minH - target); kh = minH; if (overshoot > 60f) padFull = true }
+                    target > maxH -> kh = maxH
+                    else -> { kh = target; overshoot = 0f }
+                }
+            },
+            onSettle = { overshoot = 0f; c.updateKeyHeight(kh.roundToInt()) },
+        )
         if (c.showReadout) {
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                 Text("SENDING ", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.sp))
@@ -366,14 +364,13 @@ private fun PortraitThumb(
         }
         ModifierBar(c, ctrl, shift, alt, gui, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
         Spacer(Modifier.height(8.dp))
-        if (pl == "onehanded") {
+        if (oneHand) {
             Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = if (c.oneHandSide == "right") Arrangement.Start else Arrangement.End) {
                 FlipSideChip(c.oneHandSide) { c.updateOneHandSide(if (c.oneHandSide == "right") "left" else "right") }
             }
         }
-        ThumbKeyboard(c, rows, shift, caps, view, split = pl == "split",
-            oneHandSide = if (pl == "onehanded") c.oneHandSide else null, compact = pl == "padfirst",
-            onMod = onMod, onChar = onChar, onSpecial = onSpecial)
+        ThumbKeyboard(c, rows, shift, caps, view, rowHeight = animKh.dp,
+            oneHandSide = if (oneHand) c.oneHandSide else null, onMod = onMod, onChar = onChar, onSpecial = onSpecial)
       }
     }
 }
@@ -396,26 +393,18 @@ private fun RowScope.ThumbItem(
     }
 }
 
-/** The thumb keyboard body — supports full, edge-split, and one-handed (side-shifted) arrangements. */
+/** The thumb keyboard body — rows at [rowHeight]; optionally side-shifted for one-handed reach. */
 @Composable
 private fun ThumbKeyboard(
     c: RelayController, rows: List<List<TK>>, shift: Boolean, caps: Boolean, view: android.view.View,
-    split: Boolean, oneHandSide: String?, compact: Boolean,
+    rowHeight: Dp, oneHandSide: String?,
     onMod: (String) -> Unit, onChar: (Char) -> Unit, onSpecial: (String) -> Unit,
 ) {
     val gap = c.keyGap.dp
-    val keyH = (if (compact) (c.keyHeight * 0.72f).toInt().coerceAtLeast(40) else c.keyHeight).dp
     val body: @Composable ColumnScope.() -> Unit = {
-        rows.forEachIndexed { ri, row ->
-            Row(Modifier.fillMaxWidth().height(keyH), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                if (split && ri < rows.size - 1) {       // split letter rows; leave the space row whole
-                    val mid = (row.size + 1) / 2
-                    row.subList(0, mid).forEach { ThumbItem(c, it, shift, caps, view, onMod, onChar, onSpecial) }
-                    Spacer(Modifier.weight(1.1f))
-                    row.subList(mid, row.size).forEach { ThumbItem(c, it, shift, caps, view, onMod, onChar, onSpecial) }
-                } else {
-                    row.forEach { ThumbItem(c, it, shift, caps, view, onMod, onChar, onSpecial) }
-                }
+        rows.forEach { row ->
+            Row(Modifier.fillMaxWidth().height(rowHeight), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                row.forEach { ThumbItem(c, it, shift, caps, view, onMod, onChar, onSpecial) }
             }
         }
     }
@@ -427,6 +416,41 @@ private fun ThumbKeyboard(
         }
     } else {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap), content = body)
+    }
+}
+
+/** Draggable divider between trackpad and keyboard — reports vertical drag in dp; lively pill grip. */
+@Composable
+private fun ResizeHandle(onResize: (Float) -> Unit, onSettle: () -> Unit) {
+    val col = Relay.colors
+    val density = LocalDensity.current.density
+    val infinite = rememberInfiniteTransition(label = "rh")
+    val pulse by infinite.animateFloat(0.35f, 0.8f, infiniteRepeatable(tween(1300), RepeatMode.Reverse), label = "rhp")
+    var pressed by remember { mutableStateOf(false) }
+    val w by animateDpAsState(if (pressed) 56.dp else 40.dp, label = "rw")
+    Box(
+        Modifier.fillMaxWidth().height(26.dp).pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                pressed = true
+                while (true) {
+                    val e = awaitPointerEvent()
+                    val ch = e.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!ch.pressed) break
+                    onResize(ch.positionChange().y / density)
+                    ch.consume()
+                }
+                pressed = false
+                onSettle()
+            }
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.width(w).height(if (pressed) 6.dp else 4.dp)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(if (pressed) col.accent else col.textFaint.copy(alpha = pulse)),
+        )
     }
 }
 

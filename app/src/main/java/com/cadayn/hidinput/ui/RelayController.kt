@@ -48,7 +48,7 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     var behavior by mutableStateOf(prefs.getString("behavior", "sticky")!!); private set      // sticky | oneshot
     var keycap by mutableStateOf(prefs.getString("keycap", "sculpted")!!); private set         // sculpted | flat
     var layout by mutableStateOf(prefs.getString("layout", "gesturebar")!!); private set       // gesturebar | split | toggle
-    var portraitLayout by mutableStateOf(prefs.getString("portraitLayout", "thumb")!!); private set  // thumb | split | padfirst | onehanded | toggle
+    var portraitLayout by mutableStateOf(prefs.getString("portraitLayout", "standard")!!); private set  // standard (resizable) | onehanded
     var oneHandSide by mutableStateOf(prefs.getString("oneHandSide", "right")!!); private set        // left | right
     var sensitivity by mutableStateOf(prefs.getInt("sensitivity", 5)); private set
     var accel by mutableStateOf(prefs.getInt("accel", 5)); private set

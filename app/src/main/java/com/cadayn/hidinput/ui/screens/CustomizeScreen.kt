@@ -87,27 +87,33 @@ private fun Controls(c: RelayController, modifier: Modifier) {
             TText(c.hue.label, Relay.type.sub.copy(fontSize = 11.5.sp), col.textFaint)
         }
 
-        Section("Landscape layout") {
-            OptionCard(c.layout == "gesturebar", "Gesture bar", "Trackpad strip", { c.updateLayout("gesturebar") }) { LayoutGlyph("gesturebar") }
-            OptionCard(c.layout == "split", "Split", "Keys + pad", { c.updateLayout("split") }) { LayoutGlyph("split") }
-            OptionCard(c.layout == "toggle", "Toggle", "Switch modes", { c.updateLayout("toggle") }) { LayoutGlyph("toggle") }
+        // Layout controls are orientation-specific — show only the relevant one + a hint for the other.
+        val portrait = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+        if (!portrait) {
+            Section("Landscape layout") {
+                OptionCard(c.layout == "gesturebar", "Gesture bar", "Trackpad strip", { c.updateLayout("gesturebar") }) { LayoutGlyph("gesturebar") }
+                OptionCard(c.layout == "split", "Split", "Keys + pad", { c.updateLayout("split") }) { LayoutGlyph("split") }
+                OptionCard(c.layout == "toggle", "Toggle", "Switch modes", { c.updateLayout("toggle") }) { LayoutGlyph("toggle") }
+            }
+        } else {
+            RotateHint("Rotate to landscape to choose the landscape layout")
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Eyebrow("Portrait layout")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OptionCard(c.portraitLayout == "thumb", "Thumb", "Pad + keys", { c.updatePortraitLayout("thumb") }) { PortraitGlyph("thumb") }
-                OptionCard(c.portraitLayout == "split", "Split", "Edge halves", { c.updatePortraitLayout("split") }) { PortraitGlyph("split") }
-                OptionCard(c.portraitLayout == "padfirst", "Pad-first", "Big trackpad", { c.updatePortraitLayout("padfirst") }) { PortraitGlyph("padfirst") }
+        if (portrait) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Eyebrow("Portrait keyboard")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OptionCard(c.portraitLayout != "onehanded", "Standard", "Resizable split", { c.updatePortraitLayout("standard") }) { PortraitGlyph("thumb") }
+                    OptionCard(c.portraitLayout == "onehanded", "One-handed", "Side-shifted", { c.updatePortraitLayout("onehanded") }) { PortraitGlyph("onehanded") }
+                }
+                if (c.portraitLayout == "onehanded") {
+                    com.cadayn.hidinput.ui.components.Seg(c.oneHandSide, listOf("left" to "Left hand", "right" to "Right hand"), c::updateOneHandSide)
+                }
+                TText("Drag the divider above the keyboard to resize it — all the way down for a full trackpad.",
+                    Relay.type.sub.copy(fontSize = 11.5.sp), Relay.colors.textFaint)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OptionCard(c.portraitLayout == "onehanded", "One-handed", "Side-shifted", { c.updatePortraitLayout("onehanded") }) { PortraitGlyph("onehanded") }
-                OptionCard(c.portraitLayout == "toggle", "Toggle", "Keys ↔ pad", { c.updatePortraitLayout("toggle") }) { PortraitGlyph("toggle") }
-                Spacer(Modifier.weight(1f))
-            }
-            if (c.portraitLayout == "onehanded") {
-                com.cadayn.hidinput.ui.components.Seg(c.oneHandSide, listOf("left" to "Left hand", "right" to "Right hand"), c::updateOneHandSide)
-            }
+        } else {
+            RotateHint("Rotate to portrait to change the portrait keyboard")
         }
 
         Section("Keycaps") {
@@ -203,6 +209,19 @@ private fun LayoutGlyph(kind: String) {
                 Box(Modifier.size(16.dp, 5.dp).clip(RoundedCornerShape(2.dp)).background(c.accentDim))
             }
         }
+    }
+}
+
+@Composable
+private fun RotateHint(text: String) {
+    val c = Relay.colors
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.surface)
+            .border(1.dp, c.border, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("↻", style = Relay.type.h2.copy(color = c.accent, fontSize = 18.sp))
+        Text(text, style = Relay.type.sub.copy(color = c.textDim, fontSize = 12.5.sp))
     }
 }
 

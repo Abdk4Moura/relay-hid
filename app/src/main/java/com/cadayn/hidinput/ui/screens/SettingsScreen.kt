@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
@@ -38,6 +39,7 @@ import com.cadayn.hidinput.ui.theme.Relay
 
 @Composable
 fun SettingsScreen(c: RelayController) {
+    val portrait = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
     Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 24.dp), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 620.dp)) {
             TText("Settings", Relay.type.h1, Relay.colors.text)
@@ -55,11 +57,12 @@ fun SettingsScreen(c: RelayController) {
                     Seg(c.behavior, listOf("sticky" to "Sticky", "oneshot" to "One-shot"), c::updateBehavior)
                 }
                 SettingRow("Caps Lock → Esc") { RelaySwitch(c.capsEsc, c::updateCapsEsc) }
-                SettingRow("Key height", "Taller keys on the thumb keyboard") { RelaySlider(c.keyHeight, 44, 88, onChange = c::updateKeyHeight) }
+                if (portrait) SettingRow("Key height", "Resting size of the thumb keys (drag the divider to resize live)") { RelaySlider(c.keyHeight, 38, 82, onChange = c::updateKeyHeight) }
                 SettingRow("Key spacing", "Lower = tighter, bigger-feeling keys") { RelaySlider(c.keyGap, 0, 12, onChange = c::updateKeyGap) }
-                SettingRow("Show arrow keys (landscape)", "Off = arrows live on the space bar (hold & slide)") {
+                if (!portrait) SettingRow("Show arrow keys (landscape)", "Off = arrows live on the space bar (hold & slide)") {
                     RelaySwitch(c.showArrowKeys, c::updateShowArrowKeys)
                 }
+                if (portrait) OrientationHint("Rotate to landscape for landscape-only key options")
                 SettingRow("Corner-slide animation", "Light up & pop the corner symbol as you flick toward it") {
                     RelaySwitch(c.slideAnim, c::updateSlideAnim)
                 }
@@ -77,7 +80,7 @@ fun SettingsScreen(c: RelayController) {
                 SettingRow("Natural scrolling") { RelaySwitch(c.naturalScroll, c::updateNaturalScroll) }
                 SettingRow("Tap to click") { RelaySwitch(c.tapClick, c::updateTapClick) }
                 SettingRow("Momentum scrolling", "Flick two fingers to keep scrolling") { RelaySwitch(c.momentum, c::updateMomentum) }
-                SettingRow("Trackpad auto-return", "Landscape: seconds the full pad waits (idle) before the keyboard returns. 0 = swipe only") {
+                if (!portrait) SettingRow("Trackpad auto-return", "Landscape: seconds the full pad waits (idle) before the keyboard returns. 0 = swipe only") {
                     RelaySlider(c.padTimeout, 0, 8, onChange = c::updatePadTimeout)
                 }
                 SettingRow("Invert pointer X") { RelaySwitch(c.invertX, c::updateInvertX) }
@@ -127,6 +130,15 @@ fun SettingsScreen(c: RelayController) {
             }
             Spacer(Modifier.height(30.dp))
         }
+    }
+}
+
+@Composable
+private fun OrientationHint(text: String) {
+    val col = Relay.colors
+    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("↻", style = Relay.type.body.copy(color = col.accent, fontSize = 15.sp))
+        Text(text, style = Relay.type.sub.copy(color = col.textFaint, fontSize = 12.sp))
     }
 }
 
