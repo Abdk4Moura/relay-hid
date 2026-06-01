@@ -587,6 +587,8 @@ class RelayController private constructor(private val context: Context) : HidPer
 
     /** Used by the volume-key remap in MainActivity. */
     fun scroll(amount: Int) = mouseMove(0, 0, amount, 0)
+    /** Horizontal scroll (side-scroll). WiFi/desktop only — BT mouse descriptor has no pan axis yet. */
+    fun scrollH(amount: Int) { if (useWifi) wifi.hscroll(amount) }
     fun click(right: Boolean = false) {
         val b = if (right) HidConstants.MOUSE_RIGHT else HidConstants.MOUSE_LEFT
         mouseMove(0, 0, 0, b); mouseMove(0, 0, 0, 0)

@@ -1217,7 +1217,8 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
         var threeStart: Offset? = null
         var appFired = false        // 3-finger swipe → ⌘Tab (once per gesture)
         var twoStart: Offset? = null
-        var navFired = false        // 2-finger horizontal swipe → back/forward
+        var twoMode = 0             // 0 = undecided, 1 = scroll (both axes), 2 = nav (back/forward)
+        var scrollAccX = 0f         // sub-pixel horizontal (side-scroll) carry
         while (true) {
             val ev = withTimeoutOrNull(55) { awaitPointerEvent() }   // poll so a stationary long-press registers
             if (ev == null) {
@@ -1246,26 +1247,31 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                 threeStart = null
                 val cen = pressed.fold(Offset.Zero) { a, ch -> a + ch.position } / pressed.size.toFloat()
                 if (twoStart == null) twoStart = cen
-                val tdx = cen.x - twoStart!!.x; val tdy = cen.y - twoStart!!.y
-                if (c.swipeNav && !navFired && abs(tdx) > 60f && abs(tdx) > abs(tdy) * 1.1f) {
-                    navFired = true; moved = true
-                    val back = tdx > 0
-                    if (c.isApple) c.tapKey(HidConstants.MOD_LGUI, if (back) 0x2F else 0x30)   // ⌘[ / ⌘]
-                    else c.tapKey(HidConstants.MOD_LALT, if (back) HidConstants.KEY_LEFT else HidConstants.KEY_RIGHT)   // Alt+←/→
-                    haptic(android.view.HapticFeedbackConstants.LONG_PRESS)
-                    c.logEvent("key", if (back) "back" else "forward")
-                } else if (!navFired) {
-                    lastCentroid?.let { prev ->
-                        val dy = cen.y - prev.y
-                        if (abs(dy) > 0.5f) {
-                            moved = true
-                            val dir = if (c.naturalScroll) -1 else 1
-                            val step = dy * dir * (c.scrollSpeed / 5f) * 0.18f
-                            scrollAcc += step
-                            scrollVel = scrollVel * 0.6f + step * 0.4f
-                            val steps = scrollAcc.roundToInt()
-                            if (steps != 0) { c.mouseMove(0, 0, steps.coerceIn(-18, 18), 0); scrollAcc -= steps }
+                lastCentroid?.let { prev ->
+                    val dx = cen.x - prev.x; val dy = cen.y - prev.y
+                    // Decide once: a quick, horizontal-dominant flick = back/forward nav; anything
+                    // else = a 2-finger scroll (now omnidirectional — vertical AND side-scroll).
+                    if (twoMode == 0) {
+                        if (c.swipeNav && abs(dx) > 22f && abs(dx) > abs(dy) * 1.6f) {
+                            twoMode = 2; moved = true
+                            val back = (cen.x - twoStart!!.x) > 0
+                            if (c.isApple) c.tapKey(HidConstants.MOD_LGUI, if (back) 0x2F else 0x30)
+                            else c.tapKey(HidConstants.MOD_LALT, if (back) HidConstants.KEY_LEFT else HidConstants.KEY_RIGHT)
+                            haptic(android.view.HapticFeedbackConstants.LONG_PRESS)
+                            c.logEvent("key", if (back) "back" else "forward")
+                        } else if (abs(dx) > 1f || abs(dy) > 1f) {
+                            twoMode = 1
                         }
+                    }
+                    if (twoMode == 1) {
+                        moved = true
+                        val dir = if (c.naturalScroll) -1 else 1
+                        val gain = (c.scrollSpeed / 5f) * 0.18f
+                        val stepY = dy * dir * gain
+                        scrollAcc += stepY; scrollVel = scrollVel * 0.6f + stepY * 0.4f
+                        val sy = scrollAcc.roundToInt(); if (sy != 0) { c.mouseMove(0, 0, sy.coerceIn(-18, 18), 0); scrollAcc -= sy }
+                        scrollAccX += dx * dir * gain
+                        val sx = scrollAccX.roundToInt(); if (sx != 0) { c.scrollH(sx.coerceIn(-18, 18)); scrollAccX -= sx }
                     }
                 }
                 lastCentroid = cen
@@ -1274,6 +1280,7 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                 lastCentroid = null
                 threeStart = null
                 twoStart = null
+                twoMode = 0
                 val ch = pressed.first()
                 val d = ch.position - lastOne
                 lastOne = ch.position

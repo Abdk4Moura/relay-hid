@@ -47,6 +47,7 @@ enum Msg {
     Move { dx: i32, dy: i32 },
     Moveto { x: i32, y: i32 },
     Scroll { dy: i32 },
+    Hscroll { dx: i32 },
     Button { b: String, down: bool },
     Click { b: String },
     Consumer { usage: u16 },
@@ -107,6 +108,7 @@ impl Injector {
         axes.insert(RelativeAxisType::REL_X);
         axes.insert(RelativeAxisType::REL_Y);
         axes.insert(RelativeAxisType::REL_WHEEL);
+        axes.insert(RelativeAxisType::REL_HWHEEL);   // side-scroll
         let dev = VirtualDeviceBuilder::new()?
             .name("Relay Virtual Input")
             .with_keys(&keys)?
@@ -191,6 +193,15 @@ impl Injector {
             EventType::RELATIVE,
             RelativeAxisType::REL_WHEEL.0,
             dy,
+        )]);
+        self.flush();
+    }
+
+    fn hscroll(&mut self, dx: i32) {
+        self.emit(&[InputEvent::new(
+            EventType::RELATIVE,
+            RelativeAxisType::REL_HWHEEL.0,
+            dx,
         )]);
         self.flush();
     }
@@ -334,6 +345,7 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
             Msg::Move { .. } => "move".into(),
             Msg::Moveto { x, y } => format!("moveto {x},{y}"),
             Msg::Scroll { .. } => "scroll".into(),
+            Msg::Hscroll { .. } => "hscroll".into(),
             Msg::Button { b, down } => format!("{b} {}", if *down { "down" } else { "up" }),
             Msg::Click { b } => format!("{b} click"),
             Msg::Consumer { usage } => format!("media 0x{usage:02x}"),
@@ -384,6 +396,7 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
                         Msg::Move { dx, dy } => g.move_rel(dx, dy),
                         Msg::Moveto { x, y } => g.move_abs(x, y),
                         Msg::Scroll { dy } => g.scroll(dy),
+                        Msg::Hscroll { dx } => g.hscroll(dx),
                         Msg::Button { b, down } => g.button(&b, down),
                         Msg::Click { b } => g.click(&b),
                         Msg::Consumer { usage } => g.consumer(usage),

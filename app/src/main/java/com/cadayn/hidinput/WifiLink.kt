@@ -179,6 +179,7 @@ class WifiLink {
     fun key(mods: Int, code: Int) = send("""{"t":"key","code":$code,"mods":$mods}""")
     fun move(dx: Int, dy: Int) = send("""{"t":"move","dx":$dx,"dy":$dy}""")
     fun scroll(dy: Int) = send("""{"t":"scroll","dy":$dy}""")
+    fun hscroll(dx: Int) = send("""{"t":"hscroll","dx":$dx}""")
     fun button(b: String, down: Boolean) = send("""{"t":"button","b":"$b","down":$down}""")
     fun consumer(usage: Int) = send("""{"t":"consumer","usage":$usage}""")
     fun text(s: String) = send("""{"t":"text","s":"${esc(s)}"}""")
