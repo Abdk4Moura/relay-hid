@@ -236,17 +236,25 @@ class RelayController private constructor(private val context: Context) : HidPer
             val nm = safeName(d) ?: d.address
             out[normName(nm)] = UiDevice(nm, d, null)
         }
-        // discovered desktops (live on the LAN) + the last-used host even if not currently seen
-        val wifis = LinkedHashMap<String, Triple<String, String, Int>>() // key -> (name, ip, port)
-        discovery.hosts.forEach { wifis[normName(it.name)] = Triple(it.name, it.ip, it.port) }
-        prefs.getString("lastWifiHost", null)?.let { saved ->
-            if (wifis.values.none { it.second == saved }) wifis[normName(saved)] = Triple(saved, saved, prefs.getInt("lastWifiPort", 47600))
+        // discovered desktops (live on the LAN) + the last-used host even if not currently seen.
+        // Dedupe by IP (a single machine can announce more than one mDNS name), preferring the
+        // name that matches a Bluetooth bond so the two transports merge onto one card.
+        val btKeys = out.keys.toSet()
+        val byIp = LinkedHashMap<String, Triple<String, String, Int>>() // ip -> (name, ip, port)
+        fun consider(name: String, ip: String, port: Int) {
+            val prev = byIp[ip]
+            if (prev == null || (normName(name) in btKeys && normName(prev.first) !in btKeys)) {
+                byIp[ip] = Triple(name, ip, port)
+            }
         }
-        for ((k, w) in wifis) {
-            val pinSaved = wifiPinFor(w.second).isNotEmpty()
+        discovery.hosts.forEach { consider(it.name, it.ip, it.port) }
+        prefs.getString("lastWifiHost", null)?.let { saved -> if (saved !in byIp) consider(saved, saved, prefs.getInt("lastWifiPort", 47600)) }
+        for ((ip, w) in byIp) {
+            val k = normName(w.first)
+            val pinSaved = wifiPinFor(ip).isNotEmpty()
             val existing = out[k]
-            out[k] = existing?.copy(wifiHost = w.second, wifiPort = w.third, wifiPinSaved = pinSaved)
-                ?: UiDevice(w.first, null, w.second, w.third, pinSaved)
+            out[k] = existing?.copy(wifiHost = ip, wifiPort = w.third, wifiPinSaved = pinSaved)
+                ?: UiDevice(w.first, null, ip, w.third, pinSaved)
         }
         return out.values.toList()
     }
