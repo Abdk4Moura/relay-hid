@@ -522,11 +522,12 @@ private fun RowScope.ThumbCap(label: String, weight: Float, action: Boolean, arm
 @Composable
 private fun KeyShell(
     modifier: Modifier, sculpted: Boolean, action: Boolean, armed: Boolean, flashed: Boolean, haptic: Boolean,
-    corner: Int = 9, repeat: Boolean = false, onDown: () -> Unit, content: @Composable BoxScope.() -> Unit,
+    corner: Int = 9, repeat: Boolean = false, onLong: (() -> Unit)? = null, onDown: () -> Unit, content: @Composable BoxScope.() -> Unit,
 ) {
     val col = Relay.colors
     val view = LocalView.current
     val onDownLatest by rememberUpdatedState(onDown)
+    val onLongLatest by rememberUpdatedState(onLong)
     val hapticLatest by rememberUpdatedState(haptic)
     val repeatLatest by rememberUpdatedState(repeat)
     var pressed by remember { mutableStateOf(false) }
@@ -559,6 +560,14 @@ private fun KeyShell(
                             if (released == true) break
                             fire()
                             wait = if (first) { first = false; 110L } else maxOf(28L, wait - 12L)  // …then accelerate
+                        }
+                    } else if (onLongLatest != null) {
+                        // hold → fire the long-press action once (e.g. send a lone modifier)
+                        val released = withTimeoutOrNull(420L) { waitForUpOrCancellation(); true }
+                        if (released == null) {
+                            if (hapticLatest) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            onLongLatest?.invoke()
+                            waitForUpOrCancellation()
                         }
                     } else {
                         waitForUpOrCancellation()
@@ -692,7 +701,7 @@ private fun ModifierBar(
     Row(Modifier.fillMaxWidth().height(46.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
         BarChip(c.ctrlKey.first, ctrl, haptic, Modifier.weight(1f)) { onMod("ctrl") }
         BarChip(c.altKey.first, alt, haptic, Modifier.weight(1f)) { onMod("alt") }
-        BarChip(c.guiKey.first, gui, haptic, Modifier.weight(1f)) { onMod("gui") }
+        BarChip(c.guiKey.first, gui, haptic, Modifier.weight(1f), onLong = { onMod("gui") }) { onMod("gui") }
         BarChip("⇧", shift, haptic, Modifier.weight(1f)) { onMod("shift") }
         BarChip("esc", false, haptic, Modifier.weight(1f)) { onSpecial("esc") }
         FullscreenToggle(immersive, onToggleImmersive)
@@ -700,9 +709,9 @@ private fun ModifierBar(
 }
 
 @Composable
-private fun RowScope.BarChip(label: String, armed: Boolean, haptic: Boolean, modifier: Modifier = Modifier, repeat: Boolean = false, onTap: () -> Unit) {
+private fun RowScope.BarChip(label: String, armed: Boolean, haptic: Boolean, modifier: Modifier = Modifier, repeat: Boolean = false, onLong: (() -> Unit)? = null, onTap: () -> Unit) {
     val col = Relay.colors
-    KeyShell(modifier.fillMaxHeight(), sculpted = false, action = false, armed = armed, flashed = false, haptic = haptic, repeat = repeat, onDown = onTap) {
+    KeyShell(modifier.fillMaxHeight(), sculpted = false, action = false, armed = armed, flashed = false, haptic = haptic, repeat = repeat, onLong = onLong, onDown = onTap) {
         Text(label, maxLines = 1, style = Relay.type.mono.copy(color = if (armed) col.accent else col.textDim, fontSize = if (label.length > 2) 11.5.sp else 14.sp))
     }
 }
@@ -823,9 +832,9 @@ private fun KeyboardPane(
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(gap)) {
             ModKey(c.ctrlKey.first, c.ctrlKey.second, ctrl, 1f, sculpted, c.haptics) { onMod("ctrl") }
             ModKey(c.altKey.first, c.altKey.second, alt, 1f, sculpted, c.haptics) { onMod("alt") }
-            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics) { onMod("gui") }
+            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics, onLong = { onMod("gui") }) { onMod("gui") }
             SpaceKey(if (c.showArrowKeys) 5f else 8f, sculpted, c.haptics, c.sensitivity, c.accel, c.sideBias, onSpace = { onSpecial("space") }, onArrow = onSpecial)
-            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics) { onMod("gui") }
+            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics, onLong = { onMod("gui") }) { onMod("gui") }
             ModKey(c.altKey.first, c.altKey.second, alt, 1f, sculpted, c.haptics) { onMod("alt") }
             if (c.showArrowKeys) ArrowCluster(3f, sculpted, shift, caps, c.haptics, onKey)
         }
@@ -1056,9 +1065,9 @@ private fun RowScope.KeyCap(
 }
 
 @Composable
-private fun RowScope.ModKey(glyph: String, word: String, armed: Boolean, weight: Float, sculpted: Boolean, haptic: Boolean, onTap: () -> Unit) {
+private fun RowScope.ModKey(glyph: String, word: String, armed: Boolean, weight: Float, sculpted: Boolean, haptic: Boolean, onLong: (() -> Unit)? = null, onTap: () -> Unit) {
     val col = Relay.colors
-    KeyShell(Modifier.weight(weight).fillMaxHeight(), sculpted, action = false, armed = armed, flashed = false, haptic = haptic, onDown = onTap) {
+    KeyShell(Modifier.weight(weight).fillMaxHeight(), sculpted, action = false, armed = armed, flashed = false, haptic = haptic, onLong = onLong, onDown = onTap) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             val textLabel = glyph.length > 2   // word-style labels (Ctrl/Alt/Win/Super) vs single glyphs (⌘/⌥/⌃)
             Text(glyph, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible,
