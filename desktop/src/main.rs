@@ -1250,7 +1250,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
   .qr{width:138px;height:138px;background:#fff;border-radius:12px;padding:9px}
   .qrcap{font-family:ui-monospace,monospace;font-size:10px;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
 </style></head>
-<body><div class="card">
+<body>
+<div id="dropoverlay" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(10,13,12,.9);border:3px dashed var(--accent);box-sizing:border-box;align-items:center;justify-content:center;flex-direction:column;color:var(--accent);font-size:22px;font-weight:600;gap:8px">
+  ⬆ Drop to send to your phone<span style="font-size:13px;color:var(--dim);font-weight:400">release anywhere</span>
+</div>
+<div class="card">
   <div class="top"><div class="logo"></div><div class="brand">RELAY</div><div class="ver" id="ver">desktop</div>
     <div class="pill"><span class="dot" id="dot"></span><span id="conn">waiting…</span></div></div>
   <div class="lbl">Pairing PIN</div>
@@ -1262,8 +1266,8 @@ const INDEX_HTML: &str = r##"<!doctype html>
   <div class="hint">Same WiFi? Relay finds this machine automatically (<b>Pairing → WiFi</b>). Or scan:</div>
   <div class="qrwrap"><img class="qr" src="/qr" alt="pairing QR"><div class="qrcap">scan to connect</div></div>
   <div class="hint" style="margin-top:14px">Manual: IP <b id="ip">…</b> · PIN above.</div>
-  <div id="drop" style="margin-top:16px;padding:18px;border:1.5px dashed var(--border);border-radius:14px;text-align:center;color:var(--dim);cursor:pointer;transition:.15s">
-    ⬆ Send a file to your phone<br><span style="font-size:12px;color:var(--faint)">drag &amp; drop, or click to choose</span>
+  <div id="drop" style="margin-top:16px;padding:16px;border:1.5px dashed var(--border);border-radius:14px;text-align:center;color:var(--dim);cursor:pointer;transition:.15s">
+    📎 Click to choose a file to send to your phone<br><span style="font-size:12px;color:var(--faint)">…or drop one anywhere on this panel</span>
     <input type="file" id="fi" multiple hidden>
   </div>
   <div class="last" id="sendstat"></div>
@@ -1296,9 +1300,12 @@ const INDEX_HTML: &str = r##"<!doctype html>
   async function sendFiles(fl){for(const f of fl)await sendOne(f)}
   drop.onclick=()=>fi.click();
   fi.onchange=()=>{if(fi.files.length)sendFiles(fi.files)};
-  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.style.borderColor='var(--accent)';drop.style.color='var(--accent)'}));
-  ['dragleave'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.style.borderColor='var(--border)';drop.style.color='var(--dim)'}));
-  drop.addEventListener('drop',e=>{e.preventDefault();drop.style.borderColor='var(--border)';drop.style.color='var(--dim)';if(e.dataTransfer.files.length)sendFiles(e.dataTransfer.files)});
+  // the WHOLE panel is a drop target: dropping a file anywhere on the window sends it
+  const ov=document.getElementById('dropoverlay'); let depth=0;
+  window.addEventListener('dragenter',e=>{e.preventDefault();depth++;ov.style.display='flex'});
+  window.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'});
+  window.addEventListener('dragleave',e=>{e.preventDefault();if(--depth<=0){depth=0;ov.style.display='none'}});
+  window.addEventListener('drop',e=>{e.preventDefault();depth=0;ov.style.display='none';if(e.dataTransfer.files.length)sendFiles(e.dataTransfer.files)});
   tick(); setInterval(tick, 1000);
 </script></body></html>"##;
 
