@@ -101,6 +101,15 @@ class RelayController private constructor(private val context: Context) : HidPer
         if (wantWifi && !wifi.connected) autoReconnectWifi()
     }
 
+    /** On launch: if WiFi was in use and not explicitly disconnected last time, reconnect automatically. */
+    fun restoreWifiIfRemembered() {
+        if (!prefs.getBoolean("wifiWanted", false)) return
+        val ip = prefs.getString("lastWifiHost", null) ?: return
+        if (wifiPinFor(ip).isEmpty()) return
+        wantWifi = true
+        if (!wifi.connected) autoReconnectWifi()
+    }
+
     private fun setPhoneClipboard(text: String) {
         if (text.isEmpty() || !clipboardAuto) return
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
@@ -161,6 +170,7 @@ class RelayController private constructor(private val context: Context) : HidPer
 
     fun wifiConnect(ip: String, port: Int, pin: String) {
         wantWifi = true
+        prefs.edit().putBoolean("wifiWanted", true).apply()
         wifi.connect(ip, port, pin) { ok ->
             main.post {
                 wifiConnected = ok
@@ -173,11 +183,92 @@ class RelayController private constructor(private val context: Context) : HidPer
             }
         }
     }
-    fun wifiDisconnect() { wantWifi = false; wifi.disconnect(); wifiConnected = false; wifiHost = null; transport = "bt"; wifiBtn = 0 }
+    fun wifiDisconnect() { wantWifi = false; prefs.edit().putBoolean("wifiWanted", false).apply(); wifi.disconnect(); wifiConnected = false; wifiHost = null; transport = "bt"; wifiBtn = 0 }
 
     /** Remember the PIN per host so a discovered desktop reconnects in one tap. */
     fun wifiPinFor(ip: String): String = prefs.getString("wifipin_$ip", "") ?: ""
     private fun saveWifiPin(ip: String, pin: String) { if (pin.isNotEmpty()) prefs.edit().putString("wifipin_$ip", pin).apply() }
+
+    // ---- unified device model (target-centric: one card per machine, transport auto-chosen) ----
+    /** Which transport is live right now (single source of truth for the whole UI). */
+    val activeTransport: String? get() = when { wifiConnected -> "wifi"; isConnected -> "bt"; else -> null }
+
+    /**
+     * A target the user can connect to. A desktop carries [wifiHost] (and may also carry [bt] if
+     * bonded); a Bluetooth-only target (iPad, TV, phone) carries only [bt] and never WiFi —
+     * the receiver only runs on desktops, so iPads simply never appear as WiFi hosts.
+     */
+    data class UiDevice(
+        val name: String,
+        val bt: BluetoothDevice?,
+        val wifiHost: String?,
+        val wifiPort: Int = 47600,
+        val wifiPinSaved: Boolean = false,
+    ) {
+        val isDesktop get() = wifiHost != null          // has a receiver → WiFi-capable computer
+        val needsPin get() = wifiHost != null && !wifiPinSaved
+    }
+
+    private fun normName(s: String): String =
+        s.lowercase().removePrefix("relay on ").removePrefix("relay@").substringBefore(".local").substringBefore(" (").trim()
+
+    // Pure-audio Bluetooth classes (headsets, speakers, mics) — never Relay targets; hide them.
+    private val audioClasses = setOf(
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET,
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE,
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES,
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_LOUDSPEAKER,
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_PORTABLE_AUDIO,
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO,
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_HIFI_AUDIO,
+        android.bluetooth.BluetoothClass.Device.AUDIO_VIDEO_MICROPHONE,
+    )
+
+    private fun isLikelyTarget(d: BluetoothDevice): Boolean {
+        val cls = runCatching { d.bluetoothClass?.deviceClass }.getOrNull() ?: return true
+        return cls !in audioClasses
+    }
+
+    /** Merge bonded Bluetooth devices with discovered/saved WiFi desktops, deduped by hostname. */
+    fun unifiedDevices(): List<UiDevice> {
+        val out = LinkedHashMap<String, UiDevice>()
+        for (d in pairedDevices.filter { isLikelyTarget(it) }) {
+            val nm = safeName(d) ?: d.address
+            out[normName(nm)] = UiDevice(nm, d, null)
+        }
+        // discovered desktops (live on the LAN) + the last-used host even if not currently seen
+        val wifis = LinkedHashMap<String, Triple<String, String, Int>>() // key -> (name, ip, port)
+        discovery.hosts.forEach { wifis[normName(it.name)] = Triple(it.name, it.ip, it.port) }
+        prefs.getString("lastWifiHost", null)?.let { saved ->
+            if (wifis.values.none { it.second == saved }) wifis[normName(saved)] = Triple(saved, saved, prefs.getInt("lastWifiPort", 47600))
+        }
+        for ((k, w) in wifis) {
+            val pinSaved = wifiPinFor(w.second).isNotEmpty()
+            val existing = out[k]
+            out[k] = existing?.copy(wifiHost = w.second, wifiPort = w.third, wifiPinSaved = pinSaved)
+                ?: UiDevice(w.first, null, w.second, w.third, pinSaved)
+        }
+        return out.values.toList()
+    }
+
+    /** True if [d] is the device we're currently connected to (either transport). */
+    fun isConnectedDevice(d: UiDevice): Boolean =
+        (d.wifiHost != null && wifiConnected && wifiHost == d.wifiHost) ||
+        (d.bt != null && isConnected && deviceName == d.name)
+
+    /**
+     * Connect the best way: WiFi-first for desktops (richer + robust), Bluetooth otherwise or as
+     * fallback. If a desktop needs a PIN we don't have, the caller collects it and passes it in.
+     */
+    fun connectBest(d: UiDevice, pin: String? = null) {
+        val host = d.wifiHost
+        if (host != null) {
+            val p = pin?.takeIf { it.isNotBlank() } ?: wifiPinFor(host)
+            if (p.isNotEmpty()) { wifiConnect(host, d.wifiPort, p.trim()); return }
+            // no PIN available and none supplied → fall back to Bluetooth if we can
+        }
+        d.bt?.let { connectTo(it) }
+    }
 
     // ---- navigation / onboarding ----
     var onboarded by mutableStateOf(prefs.getBoolean("onboarded", false)); private set

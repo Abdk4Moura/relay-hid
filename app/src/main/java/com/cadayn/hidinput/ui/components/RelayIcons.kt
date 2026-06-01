@@ -82,6 +82,32 @@ object RelayIcons {
             val p = Path().apply { moveTo(s(4f), s(12f)); lineTo(s(9f), s(17f)); lineTo(s(20f), s(6f)) }
             drawPath(p, color, style = stroke(w * 1.2f, true))
         }
+
+    @Composable fun Wifi(size: Dp = 18.dp, color: Color = Relay.colors.text) =
+        IconCanvas(size, color) { s, w ->
+            val cx = s(12f); val cy = s(18f)
+            // three nested arcs + a dot, fanning up from the base point
+            listOf(4.5f, 7.5f, 10.5f).forEach { r ->
+                drawArc(color, 225f, 90f, false,
+                    topLeft = Offset(cx - s(r), cy - s(r)),
+                    size = androidx.compose.ui.geometry.Size(s(r) * 2, s(r) * 2), style = stroke(w, true))
+            }
+            drawCircle(color, w * 0.7f, Offset(cx, cy - s(0.5f)))
+        }
+
+    @Composable fun Monitor(size: Dp = 18.dp, color: Color = Relay.colors.text) =
+        IconCanvas(size, color) { s, w ->
+            drawRoundRect(color, Offset(s(3f), s(4f)), androidx.compose.ui.geometry.Size(s(18f), s(12f)),
+                androidx.compose.ui.geometry.CornerRadius(s(2f), s(2f)), style = stroke(w))
+            drawLine(color, Offset(s(8.5f), s(20f)), Offset(s(15.5f), s(20f)), w, StrokeCap.Round)
+            drawLine(color, Offset(s(12f), s(16f)), Offset(s(12f), s(20f)), w, StrokeCap.Round)
+        }
+
+    @Composable fun Plus(size: Dp = 16.dp, color: Color = Relay.colors.text) =
+        IconCanvas(size, color) { s, w ->
+            drawLine(color, Offset(s(12f), s(5f)), Offset(s(12f), s(19f)), w, StrokeCap.Round)
+            drawLine(color, Offset(s(5f), s(12f)), Offset(s(19f), s(12f)), w, StrokeCap.Round)
+        }
 }
 
 private fun DrawScope.stroke(w: Float, round: Boolean = false) =

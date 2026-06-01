@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -52,15 +53,15 @@ fun SendScreen(c: RelayController) {
         c.typeText(if (addReturn) s + "\n" else s)
     }
 
-    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 24.dp), contentAlignment = Alignment.TopCenter) {
+    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 24.dp, vertical = 24.dp), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 640.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             TText("Type & Send", Relay.type.h1, col.text)
             TText("Type or dictate here on your phone, then fire it to the host as keystrokes — perfect for logins, Wi-Fi keys, URLs and TV search boxes.",
                 Relay.type.sub, col.textDim)
 
-            // editor
+            // editor — a clearly-defined input card (was near-black, read as an empty void)
             Box(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(col.bgDeep)
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(col.surface)
                     .border(1.dp, col.border, RoundedCornerShape(14.dp)).padding(14.dp),
             ) {
                 BasicTextField(
@@ -68,7 +69,7 @@ fun SendScreen(c: RelayController) {
                     onValueChange = { text = it },
                     textStyle = TextStyle(color = col.text, fontSize = 17.sp),
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(col.accent),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp, max = 220.dp),
                     decorationBox = { inner ->
                         if (text.isEmpty()) Text("Type here… (tap the mic on your keyboard to dictate)",
                             style = TextStyle(color = col.textFaint, fontSize = 17.sp))

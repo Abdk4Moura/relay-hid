@@ -1,6 +1,5 @@
 package com.cadayn.hidinput.ui.screens
 
-import android.bluetooth.BluetoothDevice
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,12 +10,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,13 +28,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
-import com.cadayn.hidinput.ui.ConnState
 import com.cadayn.hidinput.ui.RelayController
 import com.cadayn.hidinput.ui.components.BtnKind
 import com.cadayn.hidinput.ui.components.Eyebrow
@@ -46,117 +41,192 @@ import com.cadayn.hidinput.ui.components.RelayIcons
 import com.cadayn.hidinput.ui.components.TText
 import com.cadayn.hidinput.ui.theme.Relay
 
+/**
+ * Unified, target-centric connection screen. One list of devices; the transport (Wi-Fi for
+ * desktops, Bluetooth for everything else) is chosen automatically and shown as a badge.
+ */
 @Composable
 fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit) {
     val col = Relay.colors
-    val devices = remember(c.registered, c.conn) { c.pairedDevices }
+    DisposableEffect(Unit) { c.discovery.start(); onDispose { c.discovery.stop() } }
+
+    // read the states that should refresh the list
+    c.registered; c.conn; c.wifiConnected; c.wifiHost; c.discovery.hosts.size
+    val devices = c.unifiedDevices()
 
     Column(
-        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 26.dp),
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding()
+            .padding(horizontal = 28.dp, vertical = 24.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
-                Eyebrow("Bluetooth · HID peripheral")
+                Eyebrow("Relay · Connections")
                 Spacer(Modifier.height(8.dp))
-                TText("Connect a device", Relay.type.h1, col.text)
+                TText("Your devices", Relay.type.h1, col.text)
             }
-            AdvertisingChip(registered = c.registered)
+            StatusChip(c)
         }
 
-        Spacer(Modifier.height(14.dp))
-        TText(
-            "Open Settings → Bluetooth on your other device and pick “Relay”, or tap a paired device below.",
-            Relay.type.sub, col.textDim, Modifier.widthIn(max = 540.dp),
-        )
-        Spacer(Modifier.height(16.dp))
-        RelayButton(
-            "Make discoverable", onMakeDiscoverable, kind = BtnKind.Primary, large = true,
-            leading = { RelayIcons.Bluetooth(size = 16.dp, color = col.bgDeep) },
-        )
-
-        Spacer(Modifier.height(20.dp))
-        val portrait = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
-        when {
-            devices.isEmpty() -> EmptyDevices()
-            portrait -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                devices.forEach { d -> DeviceEntry(c, d) }
-            }
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth().height((((devices.size + 1) / 2) * 84).dp),
-                userScrollEnabled = false,
-            ) {
-                items(devices) { d -> DeviceEntry(c, d) }
-            }
-        }
-
-        Spacer(Modifier.height(22.dp))
-        WifiPanel(c)
-    }
-}
-
-@Composable
-private fun WifiPanel(c: RelayController) {
-    val col = Relay.colors
-    var ip by remember { mutableStateOf(c.wifiHost ?: "") }
-    var pin by remember { mutableStateOf("") }
-    DisposableEffect(Unit) { c.discovery.start(); onDispose { c.discovery.stop() } }
-    Column(
-        Modifier.fillMaxWidth().widthIn(max = 540.dp).clip(RoundedCornerShape(16.dp)).background(col.surface)
-            .border(1.dp, if (c.wifiConnected) col.accentDim else col.border, RoundedCornerShape(16.dp)).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("WiFi · Desktop (Linux)")
-            if (c.wifiConnected) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(col.accent))
-                Text("connected", style = Relay.type.label.copy(color = col.accent, fontSize = 12.sp))
-            }
-        }
-        TText("Run the relay-desktop receiver on your computer, then enter its LAN IP + PIN.",
-            Relay.type.sub.copy(fontSize = 12.sp), col.textFaint)
-        if (!c.wifiConnected) {
-            if (c.discovery.hosts.isNotEmpty()) {
-                TText("FOUND ON YOUR NETWORK", Relay.type.label.copy(fontSize = 10.sp), col.textFaint)
-                c.discovery.hosts.forEach { h ->
-                    val saved = c.wifiPinFor(h.ip)
-                    FoundHost(h.name, h.ip, saved.isNotEmpty()) {
-                        if (saved.isNotEmpty()) c.wifiConnect(h.ip, h.port, saved)
-                        else { ip = h.ip }   // fill IP, just type the PIN once
-                    }
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                WifiField(ip, "192.168.x.x", Modifier.weight(2f)) { ip = it.filter { ch -> ch.isDigit() || ch == '.' } }
-                WifiField(pin, "PIN", Modifier.weight(1f)) { pin = it.take(8) }
-            }
-            RelayButton("Connect", { if (ip.isNotBlank()) c.wifiConnect(ip.trim(), 47600, pin.trim()) }, kind = BtnKind.Primary)
+        Spacer(Modifier.height(18.dp))
+        if (devices.isEmpty()) {
+            EmptyState()
         } else {
-            Text("→ ${c.wifiHost}  ·  input now goes over WiFi", style = Relay.type.mono.copy(color = col.textDim, fontSize = 12.5.sp))
-            RelayButton("Disconnect", { c.wifiDisconnect() }, kind = BtnKind.Secondary)
-            TText("Share text or files to “Relay” from any app to send them to the desktop. Desktop copies arrive on your phone automatically.",
-                Relay.type.sub.copy(fontSize = 11.5.sp), col.textFaint)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.widthIn(max = 560.dp)) {
+                devices.forEach { d -> DeviceRow(c, d) }
+            }
+        }
+
+        Spacer(Modifier.height(26.dp))
+        Eyebrow("Add a device")
+        Spacer(Modifier.height(12.dp))
+        AddSection(c, onMakeDiscoverable)
+        Spacer(Modifier.height(40.dp))
+    }
+}
+
+@Composable
+private fun StatusChip(c: RelayController) {
+    val col = Relay.colors
+    val t = c.activeTransport
+    val (label, color) = when (t) {
+        "wifi" -> "Wi-Fi · ${c.wifiHost}" to col.accent
+        "bt" -> "Bluetooth · ${c.deviceName ?: "device"}" to col.accent
+        else -> "Not connected" to col.textDim
+    }
+    Row(
+        Modifier.clip(RoundedCornerShape(9.dp)).background(col.bgDeep).border(1.dp, col.border, RoundedCornerShape(9.dp))
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+        Text(label, style = Relay.type.body.copy(color = color, fontSize = 12.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun DeviceRow(c: RelayController, d: RelayController.UiDevice) {
+    val col = Relay.colors
+    val shape = RoundedCornerShape(16.dp)
+    val connected = c.isConnectedDevice(d)
+    val activeWifi = connected && c.activeTransport == "wifi"
+    var pinOpen by remember { mutableStateOf(false) }
+    var pin by remember { mutableStateOf("") }
+
+    val subtitle = when {
+        d.bt != null && d.wifiHost != null -> "Wi-Fi · ${d.wifiHost}  ·  Bluetooth ready"
+        d.wifiHost != null -> "Wi-Fi · ${d.wifiHost}" + if (d.needsPin) "  ·  needs PIN" else ""
+        else -> "Bluetooth"
+    }
+
+    Column(
+        Modifier.fillMaxWidth().clip(shape).background(col.surface, shape)
+            .border(1.dp, if (connected) col.accentDim else col.border, shape),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().height(72.dp).clickable {
+                when {
+                    connected -> {}
+                    d.needsPin && d.bt == null -> pinOpen = !pinOpen
+                    else -> c.connectBest(d)
+                }
+            }.padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                    .background(if (connected) col.accentGhost else col.surface2)
+                    .border(1.dp, col.border, RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                val ic = if (connected) col.accent else col.textDim
+                if (d.isDesktop) RelayIcons.Monitor(size = 19.dp, color = ic) else RelayIcons.Bluetooth(size = 18.dp, color = ic)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(d.name, style = Relay.type.h2.copy(color = col.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = Relay.type.mono.copy(color = col.textFaint, fontSize = 11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            when {
+                connected -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (activeWifi) RelayIcons.Wifi(size = 15.dp, color = col.accent) else RelayIcons.Bluetooth(size = 14.dp, color = col.accent)
+                    Text("Connected", style = Relay.type.label.copy(color = col.accent, fontSize = 12.sp))
+                }
+                d.needsPin && d.bt == null -> Text(if (pinOpen) "enter PIN" else "set up", style = Relay.type.mono.copy(color = col.textDim, fontSize = 11.sp))
+                else -> RelayIcons.ChevronRight(color = col.textFaint)
+            }
+        }
+        if (connected && c.activeTransport == "wifi") {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                RelayButton("Disconnect", { c.wifiDisconnect() }, kind = BtnKind.Secondary)
+            }
+        }
+        if (pinOpen && d.needsPin && d.bt == null) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                WifiField(pin, "PIN", Modifier.weight(1f)) { pin = it.take(8) }
+                RelayButton("Connect", { if (pin.isNotBlank()) { c.connectBest(d, pin.trim()); pinOpen = false } }, kind = BtnKind.Primary)
+            }
         }
     }
 }
 
 @Composable
-private fun FoundHost(name: String, ip: String, saved: Boolean, onClick: () -> Unit) {
+private fun AddSection(c: RelayController, onMakeDiscoverable: () -> Unit) {
     val col = Relay.colors
-    val shape = RoundedCornerShape(11.dp)
-    Row(
-        Modifier.fillMaxWidth().clip(shape).background(col.bgDeep).border(1.dp, col.border, shape)
-            .clickable(onClick = onClick).padding(horizontal = 13.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(col.accent))
-        Column(Modifier.weight(1f)) {
-            Text(name, style = Relay.type.body.copy(color = col.text, fontSize = 13.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(ip, style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.5.sp))
+    var ipOpen by remember { mutableStateOf(false) }
+    var ip by remember { mutableStateOf("") }
+    var pin by remember { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.widthIn(max = 560.dp)) {
+        // Bluetooth: tablets, phones, TVs, consoles
+        AddCard(
+            title = "Tablet, phone or TV",
+            body = "Make this phone discoverable, then pick “Relay” in the other device’s Bluetooth settings.",
+            icon = { RelayIcons.Bluetooth(size = 18.dp, color = col.textDim) },
+            onClick = onMakeDiscoverable,
+        )
+        // Wi-Fi: computers
+        AddCard(
+            title = "Computer (Mac · Windows · Linux)",
+            body = "Run the relay-desktop receiver, then scan its QR with your camera — or enter its IP + PIN below.",
+            icon = { RelayIcons.Monitor(size = 18.dp, color = col.textDim) },
+            onClick = { ipOpen = !ipOpen },
+        )
+        if (ipOpen) {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(col.bgDeep)
+                    .border(1.dp, col.border, RoundedCornerShape(14.dp)).padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    WifiField(ip, "192.168.x.x", Modifier.weight(2f)) { ip = it.filter { ch -> ch.isDigit() || ch == '.' } }
+                    WifiField(pin, "PIN", Modifier.weight(1f)) { pin = it.take(8) }
+                }
+                RelayButton("Connect", { if (ip.isNotBlank()) { c.wifiConnect(ip.trim(), 47600, pin.trim()); ipOpen = false } }, kind = BtnKind.Primary)
+            }
         }
-        Text(if (saved) "tap to connect" else "enter PIN ↓", style = Relay.type.mono.copy(color = if (saved) col.accent else col.textDim, fontSize = 10.5.sp))
+    }
+}
+
+@Composable
+private fun AddCard(title: String, body: String, icon: @Composable () -> Unit, onClick: () -> Unit) {
+    val col = Relay.colors
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(col.surface, shape).border(1.dp, col.border, shape)
+            .clickable(onClick = onClick).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp),
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(col.surface2).border(1.dp, col.border, RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) { icon() }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Relay.type.body.copy(color = col.text, fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(body, style = Relay.type.sub.copy(fontSize = 11.5.sp), color = col.textFaint)
+        }
+        RelayIcons.Plus(size = 16.dp, color = col.textDim)
     }
 }
 
@@ -164,8 +234,8 @@ private fun FoundHost(name: String, ip: String, saved: Boolean, onClick: () -> U
 private fun WifiField(value: String, hint: String, modifier: Modifier, onChange: (String) -> Unit) {
     val col = Relay.colors
     Box(
-        modifier.clip(RoundedCornerShape(10.dp)).background(col.bgDeep)
-            .border(1.dp, col.border, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 11.dp),
+        modifier.clip(RoundedCornerShape(10.dp)).background(col.surface)
+            .border(1.dp, col.border, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 12.dp),
     ) {
         BasicTextField(
             value = value, onValueChange = onChange, singleLine = true,
@@ -176,75 +246,15 @@ private fun WifiField(value: String, hint: String, modifier: Modifier, onChange:
 }
 
 @Composable
-private fun DeviceEntry(c: RelayController, d: BluetoothDevice) {
-    val name = remember(d) { runCatching { d.name }.getOrNull() ?: d.address }
-    val isConn = c.conn == ConnState.CONNECTED && c.deviceName == name
-    val isPairing = c.conn == ConnState.PAIRING && c.deviceName == name
-    DeviceCard(name, d.address, isConn, isPairing) { if (!isConn) c.connectTo(d) }
-}
-
-@Composable
-private fun AdvertisingChip(registered: Boolean) {
-    val col = Relay.colors
-    val dotColor = if (registered) col.accent else col.warn
-    Row(
-        Modifier.clip(RoundedCornerShape(9.dp)).background(col.bgDeep).border(1.dp, col.border, RoundedCornerShape(9.dp))
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
-        Text(
-            if (registered) "Advertising as “Relay”" else "Starting…",
-            style = Relay.type.body.copy(color = if (registered) col.accent else col.warn, fontSize = 12.5.sp),
-            maxLines = 1, softWrap = false,
-        )
-    }
-}
-
-@Composable
-private fun DeviceCard(name: String, address: String, connected: Boolean, pairing: Boolean, onClick: () -> Unit) {
-    val col = Relay.colors
-    val shape = RoundedCornerShape(16.dp)
-    Row(
-        Modifier.fillMaxWidth().height(72.dp).clip(shape)
-            .background(col.surface, shape)
-            .border(1.dp, if (connected) col.accentDim else col.border, shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(13.dp),
-    ) {
-        Box(
-            Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
-                .background(if (connected) col.accentGhost else col.surface2)
-                .border(1.dp, col.border, RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center,
-        ) { RelayIcons.Bluetooth(size = 18.dp, color = if (connected) col.accent else col.textDim) }
-
-        Column(Modifier.weight(1f)) {
-            Text(name, style = Relay.type.h2.copy(color = col.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(address, style = Relay.type.mono.copy(color = col.textFaint, fontSize = 11.sp), maxLines = 1)
-        }
-        when {
-            pairing -> Text("pairing…", style = Relay.type.mono.copy(color = col.warn, fontSize = 11.sp))
-            connected -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                RelayIcons.Check(size = 16.dp, color = col.accent)
-                Text("Connected", style = Relay.type.label.copy(color = col.accent, fontSize = 12.sp))
-            }
-            else -> RelayIcons.ChevronRight(color = col.textFaint)
-        }
-    }
-}
-
-@Composable
-private fun EmptyDevices() {
+private fun EmptyState() {
     val col = Relay.colors
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(col.surface)
-            .border(1.dp, col.border, RoundedCornerShape(16.dp)).padding(28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
+        Modifier.fillMaxWidth().widthIn(max = 560.dp).clip(RoundedCornerShape(16.dp)).background(col.surface)
+            .border(1.dp, col.border, RoundedCornerShape(16.dp)).padding(26.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        TText("No paired devices yet", Relay.type.h2, col.textDim)
-        TText("Tap “Make discoverable”, then pick Relay from the other device’s Bluetooth settings.",
+        TText("No devices yet", Relay.type.h2, col.textDim)
+        TText("Add one below — a tablet or TV over Bluetooth, or a computer over Wi-Fi.",
             Relay.type.sub, col.textFaint)
     }
 }

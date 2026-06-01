@@ -1,0 +1,10 @@
+# Core (always needed)
+python-dotenv>=1.0.0
+pillow>=10.0.0
+
+# Screen capture — local display grab (omit if you only use a capture card via ffmpeg)
+mss>=9.0.0
+
+# Providers — install whichever brain(s) you want to test
+google-genai>=0.3.0      # Gemini 2.5 Computer Use
+anthropic>=0.39.0        # Claude Computer Use

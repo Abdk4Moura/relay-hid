@@ -19,13 +19,20 @@ class WifiDiscovery(context: Context) {
     val hosts = mutableStateListOf<Host>()
 
     private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val wifiMgr = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
     private val main = Handler(Looper.getMainLooper())
     private var listener: NsdManager.DiscoveryListener? = null
     private val queue = ArrayDeque<NsdServiceInfo>()
     private var resolving = false
+    // Android's Wi-Fi driver drops multicast unless we hold this lock — without it NSD never
+    // receives the mDNS responses, so discovery silently finds nothing.
+    private var multicast: android.net.wifi.WifiManager.MulticastLock? = null
 
     fun start() {
         if (listener != null) return
+        multicast = runCatching {
+            wifiMgr.createMulticastLock("relay-mdns").apply { setReferenceCounted(false); acquire() }
+        }.getOrNull()
         val l = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(s: String) {}
             override fun onDiscoveryStopped(s: String) {}
@@ -41,6 +48,7 @@ class WifiDiscovery(context: Context) {
     fun stop() {
         listener?.let { runCatching { nsd.stopServiceDiscovery(it) } }
         listener = null
+        runCatching { multicast?.takeIf { it.isHeld }?.release() }; multicast = null
         hosts.clear(); queue.clear(); resolving = false
     }
 

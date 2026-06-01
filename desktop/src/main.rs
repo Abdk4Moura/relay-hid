@@ -691,9 +691,12 @@ fn hostname() -> String {
 /// Advertise `_relay._tcp` on the LAN via mDNS so the phone can find us automatically.
 fn start_mdns(port: u16) -> Option<ServiceDaemon> {
     let daemon = ServiceDaemon::new().ok()?;
-    let host = format!("{}.local.", hostname());
-    let props: [(&str, &str); 2] = [("v", VERSION), ("name", "Relay Desktop")];
-    let info = ServiceInfo::new("_relay._tcp.local.", "Relay Desktop", &host, "", port, &props[..])
+    let name = hostname();
+    let host = format!("{name}.local.");
+    // Advertise the hostname as the instance name so the phone can merge this desktop with its
+    // Bluetooth bond of the same machine (one card, two transports) instead of double-listing it.
+    let props: [(&str, &str); 2] = [("v", VERSION), ("name", name.as_str())];
+    let info = ServiceInfo::new("_relay._tcp.local.", &name, &host, "", port, &props[..])
         .ok()?
         .enable_addr_auto();
     daemon.register(info).ok()?;

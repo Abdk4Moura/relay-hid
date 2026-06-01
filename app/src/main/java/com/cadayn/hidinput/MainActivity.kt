@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         controller = RelayController.getInstance(applicationContext)
+        controller.restoreWifiIfRemembered()
 
         // Adaptive: allow rotation so portrait gives the thumb keyboard and
         // landscape gives the full desktop layout. (Respects the user's rotation lock.)
