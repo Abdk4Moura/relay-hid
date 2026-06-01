@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,8 +56,9 @@ fun SettingsScreen(c: RelayController) {
             ProfileChips(c.profile, c::updateProfile)
             Spacer(Modifier.height(16.dp))
 
-            // Everything else tucks into collapsible groups so the screen stays calm.
-            Group("Keys & typing") {
+            // Everything else tucks into collapsible groups (accordion — one open at a time).
+            val expanded = remember { mutableStateOf<String?>(null) }
+            Group("Keys & typing", expanded) {
                 SettingRow("Modifier behavior", "Sticky holds the modifier; one-shot clears it after the next key") {
                     Seg(c.behavior, listOf("sticky" to "Sticky", "oneshot" to "One-shot"), c::updateBehavior)
                 }
@@ -78,7 +80,7 @@ fun SettingsScreen(c: RelayController) {
                 }
             }
 
-            Group("Cursor & trackpad") {
+            Group("Cursor & trackpad", expanded) {
                 SettingRow("Pointer sensitivity") { RelaySlider(c.sensitivity, 1, 10, onChange = c::updateSensitivity) }
                 SettingRow("Cursor acceleration", "How fast the space-cursor & pointer ramp up") {
                     RelaySlider(c.accel, 0, 10, onChange = c::updateAccel)
@@ -98,7 +100,7 @@ fun SettingsScreen(c: RelayController) {
                 SettingRow("Firm-press → right-click", "Press harder on the pad for a secondary click (approximate)") { RelaySwitch(c.firmPress, c::updateFirmPress) }
             }
 
-            Group("Gestures") {
+            Group("Gestures", expanded) {
                 SettingRow("Two-finger swipe ◀ ▶", "Swipe sideways with two fingers for Back / Forward") {
                     RelaySwitch(c.swipeNav, c::updateSwipeNav)
                 }
@@ -113,12 +115,12 @@ fun SettingsScreen(c: RelayController) {
                 }
             }
 
-            Group("Feedback") {
+            Group("Feedback", expanded) {
                 SettingRow("Haptics", "Vibrate on each keystroke") { RelaySwitch(c.haptics, c::updateHaptics) }
                 SettingRow("HID readout", "Live modifier byte + key stream") { RelaySwitch(c.showReadout, c::updateShowReadout) }
             }
 
-            Group("Hardware & connection") {
+            Group("Hardware & connection", expanded) {
                 SettingRow("Volume buttons", "Repurpose the volume rocker while Relay is open") {
                     Seg(c.volumeKeys, listOf("off" to "Off", "scroll" to "Scroll", "page" to "Page", "click" to "Click"), c::updateVolumeKeys)
                 }
@@ -137,7 +139,7 @@ fun SettingsScreen(c: RelayController) {
                 if (c.renameBt) BtNameField(c)
             }
 
-            Group("WiFi & sync") {
+            Group("WiFi & sync", expanded) {
                 SettingRow("Receive desktop clipboard", "Copies on the desktop set your phone clipboard automatically") {
                     RelaySwitch(c.clipboardAuto, c::updateClipboardAuto)
                 }
@@ -184,21 +186,25 @@ private fun OrientationHint(text: String) {
     }
 }
 
-/** Collapsible settings group — collapsed by default to keep the screen calm. */
+/** Collapsible settings group — accordion: opening one collapses the others, with a smooth animate. */
 @Composable
-private fun Group(title: String, content: @Composable () -> Unit) {
+private fun Group(title: String, expanded: androidx.compose.runtime.MutableState<String?>, content: @Composable () -> Unit) {
     val col = Relay.colors
-    var open by remember { mutableStateOf(false) }
+    val open = expanded.value == title
+    val rot by androidx.compose.animation.core.animateFloatAsState(if (open) 90f else 0f, label = "chev")
     Column(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { open = !open }.padding(vertical = 14.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { expanded.value = if (open) null else title }.padding(vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(title, style = Relay.type.h2.copy(color = col.text, fontSize = 14.sp))
+            Text(title, style = Relay.type.h2.copy(color = if (open) col.accent else col.text, fontSize = 14.sp))
             Spacer(Modifier.weight(1f))
-            Text(if (open) "▾" else "▸", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 13.sp))
+            Text("▸", style = Relay.type.mono.copy(color = if (open) col.accent else col.textFaint, fontSize = 13.sp),
+                modifier = Modifier.rotate(rot))
         }
-        if (open) Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) { content() }
+        androidx.compose.animation.AnimatedVisibility(open) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) { content() }
+        }
         Box(Modifier.fillMaxWidth().height(1.dp).background(col.border))
     }
 }

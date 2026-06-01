@@ -72,6 +72,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
@@ -1056,8 +1057,9 @@ private fun RowScope.ModKey(glyph: String, word: String, armed: Boolean, weight:
     val col = Relay.colors
     KeyShell(Modifier.weight(weight).fillMaxHeight(), sculpted, action = false, armed = armed, flashed = false, haptic = haptic, onDown = onTap) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            val textLabel = glyph.length > 2   // word-style labels (Ctrl/Alt/Win) vs single glyphs (⌘/⌥/⌃)
-            Text(glyph, maxLines = 1, style = Relay.type.body.copy(color = if (armed) col.accent else col.textDim, fontSize = if (textLabel) 13.sp else 15.sp))
+            val textLabel = glyph.length > 2   // word-style labels (Ctrl/Alt/Win/Super) vs single glyphs (⌘/⌥/⌃)
+            Text(glyph, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible,
+                style = Relay.type.body.copy(color = if (armed) col.accent else col.textDim, fontSize = if (glyph.length >= 5) 10.sp else if (textLabel) 12.sp else 15.sp))
             if (!textLabel) Text(word, style = Relay.type.mono.copy(color = if (armed) col.accent else col.textFaint, fontSize = 9.sp))
         }
     }

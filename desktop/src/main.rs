@@ -135,16 +135,17 @@ impl Injector {
 
     /// Tap a HID-usage keycode while holding the HID modifier bitmask.
     fn tap_hid(&mut self, code: u16, mods: u8) {
-        let key = match hid_to_key(code) {
-            Some(k) => k,
-            None => return,
-        };
         let held = mods_to_keys(mods);
         for m in &held {
             self.key_ev(*m, 1);
         }
-        self.key_ev(key, 1);
-        self.key_ev(key, 0);
+        // code 0 = a lone modifier press (e.g. Super/⌘ alone → Start menu / Activities)
+        if code != 0 {
+            if let Some(key) = hid_to_key(code) {
+                self.key_ev(key, 1);
+                self.key_ev(key, 0);
+            }
+        }
         for m in held.iter().rev() {
             self.key_ev(*m, 0);
         }
