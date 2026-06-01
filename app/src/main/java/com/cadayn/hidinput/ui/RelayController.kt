@@ -364,6 +364,7 @@ class RelayController private constructor(private val context: Context) : HidPer
     var naturalScroll by mutableStateOf(prefs.getBoolean("naturalScroll", true)); private set
     var tapClick by mutableStateOf(prefs.getBoolean("tapClick", true)); private set
     var haptics by mutableStateOf(prefs.getBoolean("haptics", true)); private set
+    var keyRepeat by mutableStateOf(prefs.getBoolean("keyRepeat", true)); private set   // hold a key to auto-repeat
     var showReadout by mutableStateOf(prefs.getBoolean("showReadout", true)); private set
     var autoReconnect by mutableStateOf(prefs.getBoolean("autoReconnect", true)); private set
     var btName by mutableStateOf(prefs.getString("btName", "Relay")!!); private set
@@ -547,6 +548,7 @@ class RelayController private constructor(private val context: Context) : HidPer
     fun updateNaturalScroll(v: Boolean) { naturalScroll = v; prefs.edit().putBoolean("naturalScroll", v).apply() }
     fun updateTapClick(v: Boolean) { tapClick = v; prefs.edit().putBoolean("tapClick", v).apply() }
     fun updateHaptics(v: Boolean) { haptics = v; prefs.edit().putBoolean("haptics", v).apply() }
+    fun updateKeyRepeat(v: Boolean) { keyRepeat = v; prefs.edit().putBoolean("keyRepeat", v).apply() }
     fun updateShowReadout(v: Boolean) { showReadout = v; prefs.edit().putBoolean("showReadout", v).apply() }
     fun updateAutoReconnect(v: Boolean) { autoReconnect = v; hid.autoReconnect = v; prefs.edit().putBoolean("autoReconnect", v).apply() }
     fun updateLandscape(v: Boolean) { landscape = v; prefs.edit().putBoolean("landscape", v).apply() }

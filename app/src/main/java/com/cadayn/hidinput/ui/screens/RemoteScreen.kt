@@ -38,6 +38,7 @@ import com.cadayn.hidinput.HidConstants
 import com.cadayn.hidinput.ui.RelayController
 import com.cadayn.hidinput.ui.components.SectionTitle
 import com.cadayn.hidinput.ui.components.TText
+import com.cadayn.hidinput.ui.components.repeatingPress
 import com.cadayn.hidinput.ui.theme.Relay
 import kotlin.math.roundToInt
 
@@ -85,15 +86,15 @@ private fun RemotePad(c: RelayController, portrait: Boolean) {
 private fun DPad(c: RelayController, modifier: Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Spacer(Modifier.weight(1f)); RKey("↑", Modifier.weight(1f)) { c.tapKeycode(HidConstants.KEY_UP); c.logEvent("key", "↑") }; Spacer(Modifier.weight(1f))
+            Spacer(Modifier.weight(1f)); RKey("↑", Modifier.weight(1f), repeat = c.keyRepeat) { c.tapKeycode(HidConstants.KEY_UP); c.logEvent("key", "↑") }; Spacer(Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            RKey("←", Modifier.weight(1f)) { c.tapKeycode(HidConstants.KEY_LEFT); c.logEvent("key", "←") }
+            RKey("←", Modifier.weight(1f), repeat = c.keyRepeat) { c.tapKeycode(HidConstants.KEY_LEFT); c.logEvent("key", "←") }
             RKey("OK", Modifier.weight(1f), accent = true) { c.tapKeycode(HidConstants.KEY_ENTER); c.logEvent("key", "OK") }
-            RKey("→", Modifier.weight(1f)) { c.tapKeycode(HidConstants.KEY_RIGHT); c.logEvent("key", "→") }
+            RKey("→", Modifier.weight(1f), repeat = c.keyRepeat) { c.tapKeycode(HidConstants.KEY_RIGHT); c.logEvent("key", "→") }
         }
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Spacer(Modifier.weight(1f)); RKey("↓", Modifier.weight(1f)) { c.tapKeycode(HidConstants.KEY_DOWN); c.logEvent("key", "↓") }; Spacer(Modifier.weight(1f))
+            Spacer(Modifier.weight(1f)); RKey("↓", Modifier.weight(1f), repeat = c.keyRepeat) { c.tapKeycode(HidConstants.KEY_DOWN); c.logEvent("key", "↓") }; Spacer(Modifier.weight(1f))
         }
     }
 }
@@ -106,16 +107,16 @@ private fun BackHomeRow(c: RelayController, modifier: Modifier) = Row(modifier, 
 
 @Composable
 private fun MediaRow(c: RelayController, modifier: Modifier) = Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-    RKey("⏮", Modifier.weight(1f)) { c.consumer(HidConstants.CC_PREV); c.logEvent("key", "prev") }
+    RKey("⏮", Modifier.weight(1f), repeat = c.keyRepeat) { c.consumer(HidConstants.CC_PREV); c.logEvent("key", "prev") }
     RKey("⏯", Modifier.weight(1f)) { c.consumer(HidConstants.CC_PLAY_PAUSE); c.logEvent("key", "play") }
-    RKey("⏭", Modifier.weight(1f)) { c.consumer(HidConstants.CC_NEXT); c.logEvent("key", "next") }
+    RKey("⏭", Modifier.weight(1f), repeat = c.keyRepeat) { c.consumer(HidConstants.CC_NEXT); c.logEvent("key", "next") }
 }
 
 @Composable
 private fun VolRow(c: RelayController, modifier: Modifier) = Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-    RKey("vol −", Modifier.weight(1f)) { c.consumer(HidConstants.CC_VOL_DOWN); c.logEvent("key", "vol−") }
+    RKey("vol −", Modifier.weight(1f), repeat = c.keyRepeat) { c.consumer(HidConstants.CC_VOL_DOWN); c.logEvent("key", "vol−") }
     RKey("mute", Modifier.weight(1f)) { c.consumer(HidConstants.CC_MUTE); c.logEvent("key", "mute") }
-    RKey("vol +", Modifier.weight(1f)) { c.consumer(HidConstants.CC_VOL_UP); c.logEvent("key", "vol+") }
+    RKey("vol +", Modifier.weight(1f), repeat = c.keyRepeat) { c.consumer(HidConstants.CC_VOL_UP); c.logEvent("key", "vol+") }
 }
 
 @Composable
@@ -139,8 +140,8 @@ private fun PresenterPad(c: RelayController, portrait: Boolean) {
 
 @Composable
 private fun PrevNextRow(c: RelayController, modifier: Modifier) = Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-    RKey("◀ Prev", Modifier.weight(1f)) { c.tapKeycode(HidConstants.KEY_LEFT); c.logEvent("key", "prev slide") }
-    RKey("Next ▶", Modifier.weight(1f), accent = true) { c.tapKeycode(HidConstants.KEY_RIGHT); c.logEvent("key", "next slide") }
+    RKey("◀ Prev", Modifier.weight(1f), repeat = c.keyRepeat) { c.tapKeycode(HidConstants.KEY_LEFT); c.logEvent("key", "prev slide") }
+    RKey("Next ▶", Modifier.weight(1f), accent = true, repeat = c.keyRepeat) { c.tapKeycode(HidConstants.KEY_RIGHT); c.logEvent("key", "next slide") }
 }
 
 @Composable
@@ -167,7 +168,7 @@ private fun PointerPad(c: RelayController, modifier: Modifier) {
 }
 
 @Composable
-private fun RowScope.RKey(label: String, modifier: Modifier = Modifier, accent: Boolean = false, onTap: () -> Unit) {
+private fun RowScope.RKey(label: String, modifier: Modifier = Modifier, accent: Boolean = false, repeat: Boolean = false, onTap: () -> Unit) {
     val col = Relay.colors
     val view = LocalView.current
     val shape = RoundedCornerShape(12.dp)
@@ -175,7 +176,7 @@ private fun RowScope.RKey(label: String, modifier: Modifier = Modifier, accent: 
         else Modifier.background(Brush.verticalGradient(listOf(col.keyTop, col.keyBot)), shape)
     Box(
         modifier.fillMaxHeight().clip(shape).then(bg).border(1.dp, if (accent) col.accentDim else col.keyEdge, shape)
-            .clickable { view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP); onTap() },
+            .repeatingPress(enabled = repeat, haptic = true, view = view, onFire = onTap),
         contentAlignment = Alignment.Center,
     ) { Text(label, style = Relay.type.body.copy(color = if (accent) col.bgDeep else col.text, fontSize = 18.sp)) }
 }

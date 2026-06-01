@@ -52,7 +52,20 @@ enum Msg {
     Consumer { usage: u16 },
     Clip { s: String },
     File { name: String, data: String },
+    // chunked transfer (replaces one-shot File for progress + large files)
+    Fstart { id: u64, name: String, #[serde(default)] size: u64 },
+    Fchunk { id: u64, data: String },
+    Fend { id: u64 },
     Ping {},
+}
+
+/// An in-flight phone→desktop file being reassembled.
+struct Incoming {
+    name: String,
+    size: u64,
+    got: u64,
+    file: std::fs::File,
+    path: std::path::PathBuf,
 }
 
 const SYN: i32 = 0; // SYN_REPORT
@@ -276,6 +289,7 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
     // or a network blip can never wedge the receiver and block reconnects.
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(CLIENT_TIMEOUT_SECS)));
     let mut authed = false;
+    let mut incoming: std::collections::HashMap<u64, Incoming> = std::collections::HashMap::new();
     let reader = BufReader::new(stream);
     for line in reader.lines() {
         let line = match line {
@@ -325,7 +339,7 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
             Msg::Consumer { usage } => format!("media 0x{usage:02x}"),
             Msg::Clip { s } => format!("clipboard ← {} chars", s.chars().count()),
             Msg::File { ref name, .. } => format!("file ← {name}"),
-            Msg::Hello { .. } | Msg::Ping {} => String::new(),
+            Msg::Hello { .. } | Msg::Ping {} | Msg::Fstart { .. } | Msg::Fchunk { .. } | Msg::Fend { .. } => String::new(),
         };
         match msg {
             Msg::Ping {} => {} // heartbeat: presence only — keeps the read window from expiring
@@ -334,6 +348,33 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
                 Ok((fname, n)) => push_to_phone(st, &format!("{{\"t\":\"fileok\",\"name\":\"{}\",\"size\":{}}}\n", json_escape(&fname), n)),
                 Err(e) => push_to_phone(st, &format!("{{\"t\":\"fileerr\",\"name\":\"{}\",\"msg\":\"{}\"}}\n", json_escape(&name), json_escape(&e))),
             },
+            Msg::Fstart { id, name, size } => {
+                match open_incoming(&name, size) {
+                    Ok(inc) => { incoming.insert(id, inc); }
+                    Err(e) => push_to_phone(st, &format!("{{\"t\":\"fileerr\",\"name\":\"{}\",\"msg\":\"{}\"}}\n", json_escape(&name), json_escape(&e))),
+                }
+            }
+            Msg::Fchunk { id, data } => {
+                use base64::Engine;
+                if let Some(inc) = incoming.get_mut(&id) {
+                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data.trim()) {
+                        if inc.file.write_all(&bytes).is_ok() {
+                            inc.got += bytes.len() as u64;
+                            let pct = if inc.size > 0 { (inc.got * 100 / inc.size).min(100) } else { 0 };
+                            let nm = inc.name.clone();
+                            note(st, |s| s.last = format!("receiving {nm} {pct}%"));
+                        }
+                    }
+                }
+            }
+            Msg::Fend { id } => {
+                if let Some(inc) = incoming.remove(&id) {
+                    match finish_incoming(inc, st) {
+                        Ok((fname, n)) => push_to_phone(st, &format!("{{\"t\":\"fileok\",\"name\":\"{}\",\"size\":{}}}\n", json_escape(&fname), n)),
+                        Err(e) => push_to_phone(st, &format!("{{\"t\":\"fileerr\",\"name\":\"{}\",\"msg\":\"{}\"}}\n", json_escape("file"), json_escape(&e))),
+                    }
+                }
+            }
             Msg::Hello { .. } => {}
             other => {
                 if let Ok(mut g) = inj.lock() {
@@ -427,6 +468,44 @@ fn notify_desktop(summary: &str, body: &str) {
     if !sent {
         let _ = Command::new("notify-send").args([summary, body]).spawn();
     }
+}
+
+/// A collision-free path in ~/Downloads for an incoming file name.
+fn unique_download_path(name: &str) -> std::path::PathBuf {
+    let safe = name.rsplit(['/', '\\']).next().unwrap_or("file");
+    let safe = if safe.is_empty() { "file" } else { safe };
+    let dir = download_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let mut path = dir.join(safe);
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("relay-{n}-{safe}"));
+        n += 1;
+    }
+    path
+}
+
+fn part_path(path: &std::path::Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("{}.part", path.display()))
+}
+
+/// Begin a chunked receive: open a `.part` temp file next to the final destination.
+fn open_incoming(name: &str, size: u64) -> Result<Incoming, String> {
+    let path = unique_download_path(name);
+    let file = std::fs::File::create(part_path(&path)).map_err(|e| e.to_string())?;
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or(name).to_string();
+    Ok(Incoming { name: fname, size, got: 0, file, path })
+}
+
+/// Finalize a chunked receive: flush, rename `.part` → final, notify, return (name, bytes).
+fn finish_incoming(mut inc: Incoming, st: &Shared) -> Result<(String, usize), String> {
+    inc.file.flush().map_err(|e| e.to_string())?;
+    std::fs::rename(part_path(&inc.path), &inc.path).map_err(|e| e.to_string())?;
+    println!("⬇ file saved: {} ({} bytes)", inc.path.display(), inc.got);
+    notify_desktop("Relay", &format!("Received {} → Downloads", inc.name));
+    let nm = inc.name.clone();
+    note(st, |s| s.last = format!("file ← {nm} ({} B)", inc.got));
+    Ok((inc.name, inc.got as usize))
 }
 
 /// Decode + save a dropped file to ~/Downloads. Returns (final filename, byte count) on success.

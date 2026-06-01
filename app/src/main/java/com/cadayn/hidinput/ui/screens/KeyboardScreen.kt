@@ -404,7 +404,7 @@ private fun RowScope.ThumbItem(
 ) {
     when (tk) {
         is TK.Ch -> if (tk.ne != null || tk.nw != null || tk.se != null || tk.sw != null)
-            ThumbCharKey(tk, shift, caps, c.haptics, c.slideAnim, view, onChar)
+            ThumbCharKey(tk, shift, caps, c.haptics, c.slideAnim, view, c.keyRepeat, onChar)
         else ThumbCap(thumbDisplay(tk.c, shift, caps), tk.w, action = false, armed = false, c.haptics) { onChar(tk.c) }
         is TK.Act -> if (tk.id == "space")
             SpaceKey(tk.w, sculpted = c.keycap == "sculpted", haptic = c.haptics, sensitivity = c.sensitivity, accel = c.accel, sideBias = c.sideBias, onSpace = { onSpecial("space") }, onArrow = onSpecial)
@@ -807,11 +807,11 @@ private fun KeyboardPane(
                     val id = (k.code ?: k.mod ?: k.label) + "$ri-$ki"
                     if (k.mod != null || k.code != null) {
                         val armed = when (k.mod) { "caps" -> caps; "shift" -> shift; else -> false }
-                        KeyCap(k, k.weight, armed, flashId == id, sculpted, shift, caps, c.haptics) {
+                        KeyCap(k, k.weight, armed, flashId == id, sculpted, shift, caps, c.haptics, keyRepeat = c.keyRepeat) {
                             if (k.mod != null) onMod(k.mod) else onKey(k, id)
                         }
                     } else {
-                        SlideKey(k, k.weight, sculpted, shift, caps, c.haptics, c.slideAnim, view, onCenter = { onKey(k, id) }, onSlide = onChar)
+                        SlideKey(k, k.weight, sculpted, shift, caps, c.haptics, c.slideAnim, view, repeat = c.keyRepeat, onCenter = { onKey(k, id) }, onSlide = onChar)
                     }
                 }
             }
@@ -858,7 +858,7 @@ private fun cornerFor(dx: Float, dy: Float, ne: String?, nw: String?, se: String
 @Composable
 private fun RowScope.SlideKey(
     k: K, weight: Float, sculpted: Boolean, shift: Boolean, caps: Boolean, haptic: Boolean, animate: Boolean,
-    view: android.view.View, onCenter: () -> Unit, onSlide: (Char) -> Unit,
+    view: android.view.View, repeat: Boolean = false, onCenter: () -> Unit, onSlide: (Char) -> Unit,
 ) {
     val col = Relay.colors
     val rs = RoundedCornerShape(9.dp)
@@ -876,15 +876,24 @@ private fun RowScope.SlideKey(
     Box(
         Modifier.weight(weight).fillMaxHeight().clip(rs).then(bg)
             .border(1.dp, if (highlight) col.accent else if (sculpted) col.keyEdge else col.border, rs)
-            .pointerInput(Unit) {
+            .pointerInput(repeat) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     pressed = true
                     if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     var dx = 0f; var dy = 0f
                     var current: String? = null
+                    var reps = 0; var nextAt = System.currentTimeMillis() + 350L; var interval = 110L
                     while (true) {
-                        val e = awaitPointerEvent()
+                        val canRepeat = repeat && current == null
+                        val wait = if (canRepeat) (nextAt - System.currentTimeMillis()).coerceAtLeast(1L) else 100000L
+                        val e = withTimeoutOrNull(wait) { awaitPointerEvent() }
+                        if (e == null) {   // held in centre → accelerating auto-repeat of the letter
+                            onCenterLatest(); reps++
+                            if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            nextAt = System.currentTimeMillis() + interval; interval = maxOf(28L, interval - 12L)
+                            continue
+                        }
                         val ch = e.changes.firstOrNull { it.id == down.id } ?: break
                         dx += ch.positionChange().x; dy += ch.positionChange().y
                         val up = !ch.pressed
@@ -898,7 +907,7 @@ private fun RowScope.SlideKey(
                     }
                     pressed = false; active = null
                     val s = when (current) { "NE" -> k.ne; "NW" -> k.nw; "SE" -> k.se; "SW" -> k.sw; else -> null }
-                    if (!s.isNullOrEmpty()) onSlideLatest(s[0]) else onCenterLatest()
+                    if (!s.isNullOrEmpty()) onSlideLatest(s[0]) else if (reps == 0) onCenterLatest()
                 }
             },
         contentAlignment = Alignment.Center,
@@ -926,7 +935,7 @@ private fun BoxScope.CornerHint(text: String?, name: String, active: String?, an
 /* Portrait thumb key with corner slides — tap emits the letter, flick a corner emits its symbol; both go through onChar. */
 @Composable
 private fun RowScope.ThumbCharKey(
-    tk: TK.Ch, shift: Boolean, caps: Boolean, haptic: Boolean, animate: Boolean, view: android.view.View, onChar: (Char) -> Unit,
+    tk: TK.Ch, shift: Boolean, caps: Boolean, haptic: Boolean, animate: Boolean, view: android.view.View, repeat: Boolean = false, onChar: (Char) -> Unit,
 ) {
     val col = Relay.colors
     val rs = RoundedCornerShape(9.dp)
@@ -942,15 +951,24 @@ private fun RowScope.ThumbCharKey(
     Box(
         Modifier.weight(tk.w).fillMaxHeight().clip(rs).then(bg)
             .border(1.dp, if (highlight) col.accent else col.keyEdge, rs)
-            .pointerInput(Unit) {
+            .pointerInput(repeat) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     pressed = true
                     if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     var dx = 0f; var dy = 0f
                     var current: String? = null
+                    var reps = 0; var nextAt = System.currentTimeMillis() + 350L; var interval = 110L
                     while (true) {
-                        val e = awaitPointerEvent()
+                        val canRepeat = repeat && current == null
+                        val wait = if (canRepeat) (nextAt - System.currentTimeMillis()).coerceAtLeast(1L) else 100000L
+                        val e = withTimeoutOrNull(wait) { awaitPointerEvent() }
+                        if (e == null) {   // held in centre → accelerating auto-repeat of the character
+                            onCharLatest(tk.c); reps++
+                            if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            nextAt = System.currentTimeMillis() + interval; interval = maxOf(28L, interval - 12L)
+                            continue
+                        }
                         val ch = e.changes.firstOrNull { it.id == down.id } ?: break
                         dx += ch.positionChange().x; dy += ch.positionChange().y
                         val up = !ch.pressed
@@ -964,7 +982,7 @@ private fun RowScope.ThumbCharKey(
                     }
                     pressed = false; active = null
                     val s = when (current) { "NE" -> tk.ne; "NW" -> tk.nw; "SE" -> tk.se; "SW" -> tk.sw; else -> null }
-                    if (!s.isNullOrEmpty()) onCharLatest(s[0]) else onCharLatest(tk.c)
+                    if (!s.isNullOrEmpty()) onCharLatest(s[0]) else if (reps == 0) onCharLatest(tk.c)
                 }
             },
         contentAlignment = Alignment.Center,
@@ -996,12 +1014,12 @@ private fun RowScope.ArrowCluster(weight: Float, sculpted: Boolean, shift: Boole
 @Composable
 private fun RowScope.KeyCap(
     k: K, weight: Float, armed: Boolean, flashed: Boolean, sculpted: Boolean, shift: Boolean, caps: Boolean, haptic: Boolean,
-    small: Boolean = false, onTap: () -> Unit,
+    small: Boolean = false, keyRepeat: Boolean = true, onTap: () -> Unit,
 ) {
     val col = Relay.colors
     val shown = displayLabel(k, shift, caps)
     val fg = if (armed) col.accent else col.text
-    val repeat = k.code == "Backspace" || k.code == "Up" || k.code == "Down" || k.code == "Left" || k.code == "Right"
+    val repeat = keyRepeat && (k.code == "Backspace" || k.code == "Up" || k.code == "Down" || k.code == "Left" || k.code == "Right")
     KeyShell(Modifier.weight(weight).fillMaxHeight(), sculpted, action = false, armed = armed, flashed = flashed, haptic = haptic, repeat = repeat, onDown = onTap) {
         if (k.sub != null && !shift) Text(k.sub, style = Relay.type.mono.copy(color = col.textFaint, fontSize = 9.sp),
             modifier = Modifier.align(Alignment.TopEnd).padding(end = 5.dp, top = 3.dp))

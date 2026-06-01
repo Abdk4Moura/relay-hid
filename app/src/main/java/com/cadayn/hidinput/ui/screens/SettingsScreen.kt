@@ -67,6 +67,9 @@ fun SettingsScreen(c: RelayController) {
                     RelaySwitch(c.showArrowKeys, c::updateShowArrowKeys)
                 }
                 if (portrait) OrientationHint("Rotate to landscape for landscape-only key options")
+                SettingRow("Key repeat", "Hold a key (or D-pad/volume on the remote) to repeat it, accelerating") {
+                    RelaySwitch(c.keyRepeat, c::updateKeyRepeat)
+                }
                 SettingRow("Corner-slide animation", "Light up & pop the corner symbol as you flick toward it") {
                     RelaySwitch(c.slideAnim, c::updateSlideAnim)
                 }
