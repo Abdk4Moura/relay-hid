@@ -28,6 +28,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use evdev::{
     uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, Key, RelativeAxisType,
 };
+use mdns_sd::{ServiceDaemon, ServiceInfo};
+use qrcode::{render::svg, QrCode};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -280,6 +282,9 @@ fn main() {
     let ui_url = format!("http://127.0.0.1:{ui_port}");
     let _ = Command::new("xdg-open").arg(&ui_url).spawn();
 
+    // advertise on the LAN so the phone can auto-discover us (no IP typing). Keep alive.
+    let _mdns = start_mdns(port);
+
     println!("┌─────────────────────────────────────────");
     println!("│ Relay desktop receiver");
     println!("│ Listening on 0.0.0.0:{port}");
@@ -294,6 +299,29 @@ fn main() {
             Err(e) => eprintln!("accept error: {e}"),
         }
     }
+}
+
+fn hostname() -> String {
+    Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "relay-host".to_string())
+}
+
+/// Advertise `_relay._tcp` on the LAN via mDNS so the phone can find us automatically.
+fn start_mdns(port: u16) -> Option<ServiceDaemon> {
+    let daemon = ServiceDaemon::new().ok()?;
+    let host = format!("{}.local.", hostname());
+    let props: [(&str, &str); 2] = [("v", VERSION), ("name", "Relay Desktop")];
+    let info = ServiceInfo::new("_relay._tcp.local.", "Relay Desktop", &host, "", port, &props[..])
+        .ok()?
+        .enable_addr_auto();
+    daemon.register(info).ok()?;
+    println!("│ mDNS: advertising _relay._tcp on the LAN");
+    Some(daemon)
 }
 
 fn config_dir() -> std::path::PathBuf {
@@ -374,6 +402,17 @@ fn serve_ui(port: u16, status: Shared) {
             };
             let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
             let _ = req.respond(tiny_http::Response::from_string(body).with_header(header));
+        } else if req.url().starts_with("/qr") {
+            let (ip, port, pin) = {
+                let s = status.lock().unwrap();
+                (s.ip_hint.clone(), s.port, s.pin.clone())
+            };
+            let data = format!("relay://{ip}:{port}?pin={pin}");
+            let svg = QrCode::new(data.as_bytes())
+                .map(|c| c.render::<svg::Color>().min_dimensions(220, 220).quiet_zone(true).build())
+                .unwrap_or_default();
+            let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"image/svg+xml"[..]).unwrap();
+            let _ = req.respond(tiny_http::Response::from_string(svg).with_header(header));
         } else {
             let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
             let _ = req.respond(tiny_http::Response::from_string(INDEX_HTML).with_header(header));
@@ -546,6 +585,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
   .hint{font-size:12.5px;color:var(--dim);line-height:1.55;background:#0c100e;border:1px solid var(--border);border-radius:12px;padding:14px}
   .hint b{color:var(--text);font-family:ui-monospace,monospace}
   .last{font-family:ui-monospace,monospace;font-size:11px;color:var(--faint);margin-top:14px;text-align:center;min-height:14px}
+  .qrwrap{display:flex;flex-direction:column;align-items:center;gap:7px;margin-top:16px}
+  .qr{width:138px;height:138px;background:#fff;border-radius:12px;padding:9px}
+  .qrcap{font-family:ui-monospace,monospace;font-size:10px;letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
 </style></head>
 <body><div class="card">
   <div class="top"><div class="logo"></div><div class="brand">RELAY</div><div class="ver" id="ver">desktop</div>
@@ -556,7 +598,9 @@ const INDEX_HTML: &str = r##"<!doctype html>
     <div class="stat"><div class="v" id="events">0</div><div class="k">events injected</div></div>
     <div class="stat"><div class="v" id="port">—</div><div class="k">port</div></div>
   </div>
-  <div class="hint">In the Relay app → <b>Pairing → WiFi</b>, enter this machine's IP <b id="ip">…</b> and the PIN above.</div>
+  <div class="hint">Same WiFi? Relay finds this machine automatically (<b>Pairing → WiFi</b>). Or scan:</div>
+  <div class="qrwrap"><img class="qr" src="/qr" alt="pairing QR"><div class="qrcap">scan to connect</div></div>
+  <div class="hint" style="margin-top:14px">Manual: IP <b id="ip">…</b> · PIN above.</div>
   <div class="last" id="last"></div>
 </div>
 <script>
