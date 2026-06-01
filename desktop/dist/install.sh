@@ -27,6 +27,8 @@ curl -fsSL "$RAW/relay-desktop-launch" -o "$BIN_DIR/relay-desktop-launch"; chmod
 curl -fsSL "$RAW/relay-desktop.png" -o "$ICONS/relay-desktop.png" 2>/dev/null || true
 curl -fsSL "$RAW/relay-desktop.desktop" -o "$APPS/relay-desktop.desktop"
 cp "$APPS/relay-desktop.desktop" "$AUTOSTART/relay-desktop.desktop"
+# file-manager "Open with → Send to Relay (phone)" action
+curl -fsSL "$RAW/relay-send.desktop" -o "$APPS/relay-send.desktop" 2>/dev/null || true
 update-desktop-database "$APPS" 2>/dev/null || true
 gtk-update-icon-cache "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor" 2>/dev/null || true
 

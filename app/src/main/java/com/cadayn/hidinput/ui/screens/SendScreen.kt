@@ -89,6 +89,27 @@ fun SendScreen(c: RelayController) {
             }
             RelayButton("Save as snippet", { c.addSnippet(text) }, kind = BtnKind.Secondary)
 
+            // Send a file/photo to the connected desktop (WiFi only — files don't go over Bluetooth).
+            if (c.wifiActive) {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.GetContent()
+                ) { uri ->
+                    if (uri != null) Thread {
+                        val bytes = runCatching { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+                        var name = "file"
+                        runCatching {
+                            ctx.contentResolver.query(uri, null, null, null, null)?.use { cu ->
+                                val i = cu.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (i >= 0 && cu.moveToFirst()) cu.getString(i)?.let { name = it }
+                            }
+                        }
+                        if (bytes != null) c.wifiSendFile(name, bytes)
+                    }.start()
+                }
+                RelayButton("Send a file to desktop…", { picker.launch("*/*") }, kind = BtnKind.Secondary)
+            }
+
             if (c.snippets.isNotEmpty()) {
                 SectionTitle("Snippets")
                 TText("Tap to send · long-press to delete", Relay.type.sub.copy(fontSize = 11.5.sp), col.textFaint)

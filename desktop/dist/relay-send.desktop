@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Send to Relay (phone)
+Comment=Send this file to your phone over Relay
+Exec=sh -c '"${XDG_DATA_HOME:-$HOME/.local/share}/relay-desktop/relay-desktop" send "$@"' _ %F
+Icon=relay-desktop
+Terminal=false
+NoDisplay=false
+MimeType=application/octet-stream;image/png;image/jpeg;image/gif;image/webp;text/plain;application/pdf;application/zip;
+Categories=Utility;

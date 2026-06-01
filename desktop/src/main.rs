@@ -724,8 +724,8 @@ fn main() {
         thread::spawn(move || clipboard_sync_loop(st));
     }
 
-    // system-tray icon (click → open panel)
-    start_tray(ui_port);
+    // system-tray icon (click → menu: open panel / send file / quit)
+    start_tray(ui_port, Arc::clone(&status));
 
     println!("┌─────────────────────────────────────────");
     println!("│ Relay desktop receiver");
@@ -790,6 +790,31 @@ impl Sni {
 // this menu rather than calling Activate. Without it the tray icon does nothing.
 struct DbusMenu {
     url: String,
+    st: Shared,
+}
+
+/// Tray "Send file to phone…" → native picker (zenity/kdialog) on a worker thread, then push.
+fn pick_file_and_send(st: Shared) {
+    thread::spawn(move || {
+        let out = Command::new("zenity")
+            .args(["--file-selection", "--title=Send a file to your phone"])
+            .output()
+            .or_else(|_| Command::new("kdialog").arg("--getopenfilename").output());
+        match out {
+            Ok(o) if o.status.success() => {
+                let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if !path.is_empty() {
+                    if let Ok(data) = std::fs::read(&path) {
+                        let name = std::path::Path::new(&path).file_name().and_then(|s| s.to_str()).unwrap_or("file");
+                        if push_file_to_phone(name, &data, &st).is_err() {
+                            notify_desktop("Relay", "No phone connected — open Relay on your phone first.");
+                        }
+                    }
+                }
+            }
+            _ => notify_desktop("Relay", "Install zenity to pick a file here, or run: relay-desktop send <file>"),
+        }
+    });
 }
 
 type MenuProps = std::collections::HashMap<String, zbus::zvariant::OwnedValue>;
@@ -834,6 +859,7 @@ impl DbusMenu {
     ) -> (u32, MenuNode) {
         let children = vec![
             leaf_node(1, "Open Control Panel"),
+            leaf_node(3, "Send file to phone…"),
             leaf_node(2, "Quit Relay"),
         ];
         let root: MenuNode = (0, MenuProps::new(), children);
@@ -847,6 +873,7 @@ impl DbusMenu {
     ) -> Vec<(i32, MenuProps)> {
         let label = |id: i32| match id {
             1 => Some("Open Control Panel"),
+            3 => Some("Send file to phone…"),
             2 => Some("Quit Relay"),
             _ => None,
         };
@@ -871,6 +898,7 @@ impl DbusMenu {
                 1 => {
                     let _ = Command::new("xdg-open").arg(&self.url).spawn();
                 }
+                3 => pick_file_and_send(Arc::clone(&self.st)),
                 2 => std::process::exit(0),
                 _ => {}
             }
@@ -880,12 +908,12 @@ impl DbusMenu {
     fn about_to_show(&self, _id: i32) -> bool { false }
 }
 
-fn start_tray(ui_port: u16) {
+fn start_tray(ui_port: u16, st: Shared) {
     thread::spawn(move || {
         let url = format!("http://127.0.0.1:{ui_port}");
         let conn = match zbus::blocking::connection::Builder::session()
             .and_then(|b| b.serve_at("/StatusNotifierItem", Sni { url: url.clone() }))
-            .and_then(|b| b.serve_at("/MenuBar", DbusMenu { url }))
+            .and_then(|b| b.serve_at("/MenuBar", DbusMenu { url, st }))
             .and_then(|b| b.build())
         {
             Ok(c) => c,
@@ -1234,6 +1262,11 @@ const INDEX_HTML: &str = r##"<!doctype html>
   <div class="hint">Same WiFi? Relay finds this machine automatically (<b>Pairing → WiFi</b>). Or scan:</div>
   <div class="qrwrap"><img class="qr" src="/qr" alt="pairing QR"><div class="qrcap">scan to connect</div></div>
   <div class="hint" style="margin-top:14px">Manual: IP <b id="ip">…</b> · PIN above.</div>
+  <div id="drop" style="margin-top:16px;padding:18px;border:1.5px dashed var(--border);border-radius:14px;text-align:center;color:var(--dim);cursor:pointer;transition:.15s">
+    ⬆ Send a file to your phone<br><span style="font-size:12px;color:var(--faint)">drag &amp; drop, or click to choose</span>
+    <input type="file" id="fi" multiple hidden>
+  </div>
+  <div class="last" id="sendstat"></div>
   <div class="last" id="last"></div>
 </div>
 <script>
@@ -1250,6 +1283,22 @@ const INDEX_HTML: &str = r##"<!doctype html>
     }catch(e){ conn.textContent='receiver offline'; dot.classList.remove('on'); }
   }
   copy.onclick=()=>{navigator.clipboard.writeText(pin.textContent);copy.textContent='copied';setTimeout(()=>copy.textContent='copy',1200)};
+  // drop zone → POST /send (one file at a time) with live upload progress
+  const drop=document.getElementById('drop'), fi=document.getElementById('fi'), sendstat=document.getElementById('sendstat');
+  function sendOne(file){return new Promise(res=>{
+    const x=new XMLHttpRequest(); x.open('POST','/send');
+    try{x.setRequestHeader('X-Filename',file.name)}catch(_){x.setRequestHeader('X-Filename',file.name.replace(/[^\x20-\x7E]/g,'_'))}
+    x.upload.onprogress=e=>{if(e.lengthComputable)sendstat.textContent='sending '+file.name+' '+Math.round(e.loaded/e.total*100)+'%'};
+    x.onload=()=>{sendstat.textContent=(x.status==200?'sent '+file.name+' → phone':'failed: '+(x.responseText||x.status));res()};
+    x.onerror=()=>{sendstat.textContent='send failed — is your phone connected?';res()};
+    x.send(file);
+  })}
+  async function sendFiles(fl){for(const f of fl)await sendOne(f)}
+  drop.onclick=()=>fi.click();
+  fi.onchange=()=>{if(fi.files.length)sendFiles(fi.files)};
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.style.borderColor='var(--accent)';drop.style.color='var(--accent)'}));
+  ['dragleave'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.style.borderColor='var(--border)';drop.style.color='var(--dim)'}));
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.style.borderColor='var(--border)';drop.style.color='var(--dim)';if(e.dataTransfer.files.length)sendFiles(e.dataTransfer.files)});
   tick(); setInterval(tick, 1000);
 </script></body></html>"##;
 
