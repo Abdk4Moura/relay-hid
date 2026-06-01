@@ -15,3 +15,9 @@ build/
 /app/release
 # Misc
 *.log
+
+# release signing — keep private
+keystore/
+*.jks
+*.keystore
+keystore.properties

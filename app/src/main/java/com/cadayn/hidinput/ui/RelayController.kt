@@ -98,7 +98,7 @@ class RelayController private constructor(private val context: Context) : HidPer
                 wifi.connect(ip, port, pin) { ok ->
                     main.post {
                         wifiConnected = ok
-                        if (ok) { transport = "wifi"; wifiHost = ip; logEvent("click", "WiFi reconnected → $ip") }
+                        if (ok) { transport = "wifi"; wifiHost = ip; notice = null; logEvent("click", "WiFi reconnected → $ip") }
                     }
                     latch.countDown()
                 }
@@ -197,7 +197,7 @@ class RelayController private constructor(private val context: Context) : HidPer
                 wifiConnected = ok
                 transport = if (ok) "wifi" else "bt"
                 if (ok) {
-                    wifiHost = ip; saveWifiPin(ip, pin)
+                    wifiHost = ip; saveWifiPin(ip, pin); notice = null
                     prefs.edit().putString("lastWifiHost", ip).putInt("lastWifiPort", port).apply()
                     logEvent("click", "WiFi → $ip")
                 } else {
