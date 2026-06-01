@@ -23,10 +23,13 @@ class WifiLink {
     var onClip: ((String) -> Unit)? = null
     /** Called (off the main thread) when the desktop acks a file (ok, name) — ok=false on failure. */
     var onFileAck: ((Boolean, String) -> Unit)? = null
-    /** Desktop→phone transfer: progress (name, 0..100) and completion (name, bytes). */
+    /** Desktop→phone transfer: progress (name, 0..100) and completion (name, tempFile). */
     var onFileProgress: ((String, Int) -> Unit)? = null
-    var onFileReceived: ((String, ByteArray) -> Unit)? = null
-    private val incoming = HashMap<Long, Triple<String, Long, java.io.ByteArrayOutputStream>>()
+    var onFileReceived: ((String, java.io.File) -> Unit)? = null
+    /** Scratch dir for streaming incoming files to disk (set by the controller to the app cache). */
+    var cacheDir: java.io.File? = null
+    private class Rx(val name: String, val size: Long, val file: java.io.File, val out: java.io.OutputStream) { var got = 0L }
+    private val incoming = HashMap<Long, Rx>()
     /** Called (off the main thread) when the link drops *unexpectedly* (not a user disconnect). */
     var onDisconnect: (() -> Unit)? = null
 
@@ -83,13 +86,22 @@ class WifiLink {
                 "clip" -> onClip?.invoke(o.optString("s"))
                 "fileok" -> onFileAck?.invoke(true, o.optString("name"))
                 "fileerr" -> onFileAck?.invoke(false, o.optString("name"))
-                "fstart" -> incoming[o.optLong("id")] = Triple(o.optString("name"), o.optLong("size"), java.io.ByteArrayOutputStream())
-                "fchunk" -> incoming[o.optLong("id")]?.let { (name, size, baos) ->
-                    baos.write(android.util.Base64.decode(o.optString("data"), android.util.Base64.NO_WRAP))
-                    val pct = if (size > 0) (baos.size().toLong() * 100 / size).toInt().coerceAtMost(100) else 0
-                    onFileProgress?.invoke(name, pct)
+                "fstart" -> cacheDir?.let { dir ->
+                    runCatching {
+                        val tmp = java.io.File.createTempFile("relay-rx", ".part", dir)
+                        incoming[o.optLong("id")] = Rx(o.optString("name"), o.optLong("size"), tmp, java.io.BufferedOutputStream(java.io.FileOutputStream(tmp)))
+                    }
                 }
-                "fend" -> incoming.remove(o.optLong("id"))?.let { (name, _, baos) -> onFileReceived?.invoke(name, baos.toByteArray()) }
+                "fchunk" -> incoming[o.optLong("id")]?.let { rx ->
+                    val b = android.util.Base64.decode(o.optString("data"), android.util.Base64.NO_WRAP)
+                    rx.out.write(b); rx.got += b.size
+                    val pct = if (rx.size > 0) (rx.got * 100 / rx.size).toInt().coerceAtMost(100) else 0
+                    onFileProgress?.invoke(rx.name, pct)
+                }
+                "fend" -> incoming.remove(o.optLong("id"))?.let { rx ->
+                    runCatching { rx.out.flush(); rx.out.close() }
+                    onFileReceived?.invoke(rx.name, rx.file)
+                }
                 else -> {}   // "welcome" and unknowns: ignore
             }
         }
@@ -116,6 +128,27 @@ class WifiLink {
     fun file(name: String, b64: String) = send("""{"t":"file","name":"${esc(name)}","data":"$b64"}""")
 
     @Volatile private var fileSeq = 0L
+    /** Stream a file from an InputStream in 128KB chunks — constant memory, so any size works. */
+    fun sendFileStream(name: String, size: Long, input: java.io.InputStream, onProgress: (Int) -> Unit, onDone: (Boolean) -> Unit) {
+        worker.execute {
+            if (!connected) { runCatching { input.close() }; onDone(false); return@execute }
+            val id = ++fileSeq
+            writeLine("""{"t":"fstart","id":$id,"name":"${esc(name)}","size":$size}""")
+            val buf = ByteArray(128 * 1024); var sent = 0L
+            try {
+                input.use { ins ->
+                    while (connected) {
+                        val n = ins.read(buf); if (n < 0) break
+                        writeLine("""{"t":"fchunk","id":$id,"data":"${android.util.Base64.encodeToString(buf, 0, n, android.util.Base64.NO_WRAP)}"}""")
+                        sent += n
+                        onProgress(if (size > 0) (sent * 100 / size).toInt().coerceAtMost(100) else 0)
+                    }
+                }
+            } catch (e: Exception) { connected = false; closeQuietly() }
+            if (connected) writeLine("""{"t":"fend","id":$id}""")
+            onDone(connected)
+        }
+    }
     /** Stream a file in chunks (fstart/fchunk/fend) so the desktop can show progress and large
      *  files don't blow memory in one base64 blob. onProgress is 0..100; onDone(false) = link lost. */
     fun sendFileChunked(name: String, bytes: ByteArray, onProgress: (Int) -> Unit, onDone: (Boolean) -> Unit) {

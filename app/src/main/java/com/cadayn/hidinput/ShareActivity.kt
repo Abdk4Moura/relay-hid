@@ -45,17 +45,6 @@ class ShareActivity : ComponentActivity() {
     }
 
     private fun sendFile(c: RelayController, uri: Uri) {
-        val cr = contentResolver
-        Thread {
-            val bytes = runCatching { cr.openInputStream(uri)?.use { it.readBytes() } }.getOrNull() ?: return@Thread
-            var name = "file"
-            runCatching {
-                cr.query(uri, null, null, null, null)?.use { cu ->
-                    val i = cu.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (i >= 0 && cu.moveToFirst()) cu.getString(i)?.let { name = it }
-                }
-            }
-            c.wifiSendFile(name, bytes)
-        }.start()
+        c.wifiSendUri(uri)   // streamed by the controller — any size, constant memory
     }
 }

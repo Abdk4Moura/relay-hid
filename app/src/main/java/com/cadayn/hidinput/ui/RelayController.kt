@@ -71,9 +71,10 @@ class RelayController private constructor(private val context: Context) : HidPer
                 else { logEvent("key", "file failed → $name"); postSyncNotification("Couldn’t send file", name) }
             }
         }
-        // desktop→phone file: live progress, then auto-save + tap-to-open
+        // desktop→phone file: live progress, then auto-save + tap-to-open (streamed via a temp file)
+        wifi.cacheDir = context.cacheDir
         wifi.onFileProgress = { name, pct -> main.post { postProgressNotification(name, pct, false) } }
-        wifi.onFileReceived = { name, bytes -> main.post { saveIncomingFile(name, bytes) } }
+        wifi.onFileReceived = { name, file -> main.post { saveIncomingFile(name, file) } }
         // link dropped unexpectedly → reflect it and try to come back automatically
         wifi.onDisconnect = {
             main.post {
@@ -178,8 +179,8 @@ class RelayController private constructor(private val context: Context) : HidPer
 
     private val imageExts = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif")
 
-    /** Save a file the desktop pushed: images→Pictures/Relay, everything else→Downloads. */
-    private fun saveIncomingFile(name: String, bytes: ByteArray) {
+    /** Save a file the desktop pushed (streamed from a temp file): images→Pictures/Relay, else→Downloads. */
+    private fun saveIncomingFile(name: String, tmp: java.io.File) {
         val safe = name.substringAfterLast('/').ifEmpty { "relay-file" }
         val isImage = safe.substringAfterLast('.', "").lowercase() in imageExts
         val resolver = context.contentResolver
@@ -193,17 +194,19 @@ class RelayController private constructor(private val context: Context) : HidPer
                     put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
                 }
                 val u = resolver.insert(collection, values) ?: return@runCatching null
-                resolver.openOutputStream(u)?.use { it.write(bytes) }
+                resolver.openOutputStream(u)?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
                 values.clear(); values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
                 resolver.update(u, values, null, null)
                 u
             } else {
                 val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                val f = java.io.File(dir, safe); f.writeBytes(bytes); android.net.Uri.fromFile(f)
+                val f = java.io.File(dir, safe); tmp.copyTo(f, overwrite = true); android.net.Uri.fromFile(f)
             }
         }.getOrNull()
+        val kb = tmp.length() / 1024
+        runCatching { tmp.delete() }
         clearProgressNotification()
-        if (uri != null) { logEvent("key", "received $safe (${bytes.size / 1024} KB)"); postFileReceivedNotification(safe, uri) }
+        if (uri != null) { logEvent("key", "received $safe (${kb} KB)"); postFileReceivedNotification(safe, uri) }
         else { postSyncNotification("Couldn’t save file", safe) }
     }
 
@@ -250,20 +253,27 @@ class RelayController private constructor(private val context: Context) : HidPer
         if (text.isNotEmpty() && useWifi) { wifi.clip(text); logEvent("key", "clipboard → desktop (${text.length})") }
     }
 
-    /** Send a picked file to the desktop (saved to its Downloads). Capped to keep it in memory. */
-    fun wifiSendFile(name: String, bytes: ByteArray) {
+    /** Send a file (by content URI) to the desktop — streamed in chunks, so any size works. */
+    fun wifiSendUri(uri: android.net.Uri) {
         if (!useWifi) { main.post { postSyncNotification("Not connected", "Connect to a desktop to send files") }; return }
-        val maxMb = 16
-        if (bytes.size > maxMb * 1024 * 1024) {
-            main.post { logEvent("key", "file too big: $name"); postSyncNotification("File too large", "$name is over ${maxMb} MB") }
-            return
+        val cr = context.contentResolver
+        var name = "file"; var size = -1L
+        runCatching {
+            cr.query(uri, null, null, null, null)?.use { cu ->
+                val ni = cu.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (ni >= 0 && cu.moveToFirst()) cu.getString(ni)?.let { name = it }
+                val si = cu.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (si >= 0 && cu.moveToFirst() && !cu.isNull(si)) size = cu.getLong(si)
+            }
         }
-        // chunked send with live progress; the desktop's ack (onFileAck) clears it and confirms.
-        main.post { logEvent("key", "sending $name (${bytes.size / 1024} KB)…"); postProgressNotification(name, 0, true) }
-        wifi.sendFileChunked(
-            name, bytes,
-            onProgress = { pct -> main.post { postProgressNotification(name, pct, true) } },
-            onDone = { ok -> if (!ok) main.post { clearProgressNotification(); postSyncNotification("Send interrupted", name) } },
+        val input = runCatching { cr.openInputStream(uri) }.getOrNull()
+        if (input == null) { main.post { postSyncNotification("Couldn’t read file", name) }; return }
+        val fname = name
+        main.post { logEvent("key", "sending $fname…"); postProgressNotification(fname, 0, true) }
+        wifi.sendFileStream(
+            fname, size, input,
+            onProgress = { pct -> main.post { postProgressNotification(fname, pct, true) } },
+            onDone = { ok -> if (!ok) main.post { clearProgressNotification(); postSyncNotification("Send interrupted", fname) } },
         )
     }
     val wifiActive get() = useWifi

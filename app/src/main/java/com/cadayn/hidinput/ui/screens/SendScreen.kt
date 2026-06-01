@@ -91,22 +91,9 @@ fun SendScreen(c: RelayController) {
 
             // Send a file/photo to the connected desktop (WiFi only — files don't go over Bluetooth).
             if (c.wifiActive) {
-                val ctx = androidx.compose.ui.platform.LocalContext.current
                 val picker = androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.GetContent()
-                ) { uri ->
-                    if (uri != null) Thread {
-                        val bytes = runCatching { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
-                        var name = "file"
-                        runCatching {
-                            ctx.contentResolver.query(uri, null, null, null, null)?.use { cu ->
-                                val i = cu.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                                if (i >= 0 && cu.moveToFirst()) cu.getString(i)?.let { name = it }
-                            }
-                        }
-                        if (bytes != null) c.wifiSendFile(name, bytes)
-                    }.start()
-                }
+                ) { uri -> if (uri != null) c.wifiSendUri(uri) }
                 RelayButton("Send a file to desktop…", { picker.launch("*/*") }, kind = BtnKind.Secondary)
             }
 
