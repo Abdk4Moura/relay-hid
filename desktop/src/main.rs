@@ -233,8 +233,43 @@ fn note(st: &Shared, f: impl FnOnce(&mut Status)) {
     }
 }
 
-fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared) {
+// Per-IP brute-force throttle on the PIN: after MAX_PIN_FAILS bad attempts within the window,
+// refuse that IP until the window passes. Combined with a tarpit delay on each failure this caps
+// a LAN attacker to a handful of guesses/minute against the 4-digit PIN.
+type Fails = Arc<Mutex<std::collections::HashMap<std::net::IpAddr, (u32, std::time::Instant)>>>;
+const MAX_PIN_FAILS: u32 = 8;
+const FAIL_WINDOW_SECS: u64 = 60;
+
+fn pin_locked(fails: &Fails, ip: std::net::IpAddr) -> bool {
+    if let Ok(mut m) = fails.lock() {
+        if let Some((count, when)) = m.get(&ip).copied() {
+            if when.elapsed().as_secs() >= FAIL_WINDOW_SECS { m.remove(&ip); return false; }
+            return count >= MAX_PIN_FAILS;
+        }
+    }
+    false
+}
+fn note_pin_fail(fails: &Fails, ip: std::net::IpAddr) {
+    if let Ok(mut m) = fails.lock() {
+        let e = m.entry(ip).or_insert((0, std::time::Instant::now()));
+        if e.1.elapsed().as_secs() >= FAIL_WINDOW_SECS { *e = (0, std::time::Instant::now()); }
+        e.0 += 1;
+    }
+}
+fn clear_pin_fails(fails: &Fails, ip: std::net::IpAddr) {
+    if let Ok(mut m) = fails.lock() { m.remove(&ip); }
+}
+
+fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &Fails) {
     let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+    let ip = stream.peer_addr().map(|a| a.ip()).ok();
+    if let Some(ip) = ip {
+        if pin_locked(fails, ip) {
+            eprintln!("✗ {peer} locked out (too many bad PINs)");
+            thread::sleep(std::time::Duration::from_secs(2));
+            return;
+        }
+    }
     let writer = stream.try_clone().ok();
     // Reap dead/half-open peers: if no byte (incl. heartbeat ping) arrives within the
     // window, the read errors out and we drop the connection — so a backgrounded phone
@@ -258,6 +293,7 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared) {
             match msg {
                 Msg::Hello { token: t } if t == token => {
                     authed = true;
+                    if let Some(ip) = ip { clear_pin_fails(fails, ip); }
                     println!("✓ {peer} authenticated");
                     let w = writer.as_ref().and_then(|s| s.try_clone().ok());
                     note(st, |s| { s.connected = Some(peer.clone()); s.last = "connected".into(); s.tx = w; });
@@ -265,6 +301,8 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared) {
                 }
                 _ => {
                     eprintln!("✗ {peer} bad/missing token — dropping");
+                    if let Some(ip) = ip { note_pin_fail(fails, ip); }
+                    thread::sleep(std::time::Duration::from_millis(500)); // tarpit brute force
                     break;
                 }
             }
@@ -543,6 +581,7 @@ fn main() {
     println!("└─────────────────────────────────────────");
 
     let token = Arc::new(token);
+    let fails: Fails = Arc::new(Mutex::new(std::collections::HashMap::new()));
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
@@ -551,7 +590,8 @@ fn main() {
                 let inj = Arc::clone(&inj);
                 let token = Arc::clone(&token);
                 let status = Arc::clone(&status);
-                thread::spawn(move || handle(s, &token, &inj, &status));
+                let fails = Arc::clone(&fails);
+                thread::spawn(move || handle(s, &token, &inj, &status, &fails));
             }
             Err(e) => eprintln!("accept error: {e}"),
         }
@@ -762,6 +802,11 @@ fn load_or_create_token() -> String {
     let token = format!("{:04}", n % 10000);
     let _ = std::fs::create_dir_all(config_dir());
     let _ = std::fs::write(&path, &token);
+    // Token is a secret (anyone with it can inject input) — keep it readable only by the owner.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
     token
 }
 
