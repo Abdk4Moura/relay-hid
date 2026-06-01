@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Relay Desktop
+GenericName=Phone input receiver
+Comment=Receive keyboard, mouse & media from the Relay phone app over WiFi
+Exec=relay-desktop-launch
+Icon=relay-desktop
+Terminal=false
+Categories=Utility;System;
+Keywords=keyboard;mouse;remote;phone;relay;
+StartupNotify=false

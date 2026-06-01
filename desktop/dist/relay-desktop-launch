@@ -1,0 +1,21 @@
+#!/bin/sh
+# Relay desktop launcher — checks the public release for a newer build, updates in
+# place (uses the system curl, so no TLS baked into the static binary), then runs.
+DIR="${XDG_DATA_HOME:-$HOME/.local/share}/relay-desktop"
+BIN="$DIR/relay-desktop"
+BASE="https://github.com/Abdk4Moura/relay-desktop/releases/latest/download"
+mkdir -p "$DIR"
+
+remote=$(curl -fsSL --max-time 8 "$BASE/VERSION" 2>/dev/null || true)
+local=$(cat "$DIR/VERSION" 2>/dev/null || true)
+if [ -n "$remote" ] && [ "$remote" != "$local" ]; then
+  if curl -fsSL --max-time 90 "$BASE/relay-desktop-x86_64-linux" -o "$BIN.new" 2>/dev/null; then
+    chmod +x "$BIN.new" && mv "$BIN.new" "$BIN" && printf '%s' "$remote" > "$DIR/VERSION"
+    echo "Relay: updated to v$remote"
+  else
+    rm -f "$BIN.new"
+  fi
+fi
+
+[ -x "$BIN" ] || { echo "Relay: receiver missing at $BIN — re-run install.sh"; exit 1; }
+exec "$BIN" "$@"

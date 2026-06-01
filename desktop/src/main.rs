@@ -56,6 +56,8 @@ struct Status {
 }
 type Shared = Arc<Mutex<Status>>;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 struct Injector {
     dev: evdev::uinput::VirtualDevice,
 }
@@ -240,11 +242,9 @@ fn main() {
             _ => {}
         }
     }
-    let token = token.unwrap_or_else(|| {
-        // derive a 4-digit PIN from the clock if none supplied
-        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
-        format!("{:04}", n % 10000)
-    });
+    let token = token
+        .or_else(|| std::env::var("RELAY_TOKEN").ok())
+        .unwrap_or_else(load_or_create_token);
 
     let mut inj = match Injector::new() {
         Ok(i) => i,
@@ -296,6 +296,30 @@ fn main() {
     }
 }
 
+fn config_dir() -> std::path::PathBuf {
+    let base = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+    std::path::PathBuf::from(base).join("relay-desktop")
+}
+
+/// Stable PIN persisted in the config dir so it survives restarts (generated once).
+fn load_or_create_token() -> String {
+    let path = config_dir().join("token");
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        let t = s.trim().to_string();
+        if !t.is_empty() {
+            return t;
+        }
+    }
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
+    let token = format!("{:04}", n % 10000);
+    let _ = std::fs::create_dir_all(config_dir());
+    let _ = std::fs::write(&path, &token);
+    token
+}
+
 /// Best-effort LAN/Tailscale IP to show in the panel (Tailscale first, then hostname -I).
 fn ip_hint() -> String {
     if let Ok(o) = Command::new("tailscale").args(["ip", "-4"]).output() {
@@ -344,8 +368,8 @@ fn serve_ui(port: u16, status: Shared) {
                     None => "null".to_string(),
                 };
                 format!(
-                    "{{\"port\":{},\"pin\":\"{}\",\"ip\":\"{}\",\"connected\":{},\"events\":{},\"last\":\"{}\"}}",
-                    s.port, json_escape(&s.pin), json_escape(&s.ip_hint), conn, s.events, json_escape(&s.last)
+                    "{{\"port\":{},\"pin\":\"{}\",\"ip\":\"{}\",\"connected\":{},\"events\":{},\"last\":\"{}\",\"ver\":\"{}\"}}",
+                    s.port, json_escape(&s.pin), json_escape(&s.ip_hint), conn, s.events, json_escape(&s.last), VERSION
                 )
             };
             let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
@@ -524,7 +548,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
   .last{font-family:ui-monospace,monospace;font-size:11px;color:var(--faint);margin-top:14px;text-align:center;min-height:14px}
 </style></head>
 <body><div class="card">
-  <div class="top"><div class="logo"></div><div class="brand">RELAY</div><div class="ver">desktop</div>
+  <div class="top"><div class="logo"></div><div class="brand">RELAY</div><div class="ver" id="ver">desktop</div>
     <div class="pill"><span class="dot" id="dot"></span><span id="conn">waiting…</span></div></div>
   <div class="lbl">Pairing PIN</div>
   <div class="pinbox"><span class="pin" id="pin">····</span><button class="copy" id="copy">copy</button></div>
@@ -545,6 +569,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
       dot.classList.toggle('on', !!c);
       conn.textContent = c ? ('connected · ' + c.split(':')[0]) : 'waiting for phone';
       last.textContent = s.last ? ('last: ' + s.last) : '';
+      if(s.ver) ver.textContent = 'v'+s.ver;
     }catch(e){ conn.textContent='receiver offline'; dot.classList.remove('on'); }
   }
   copy.onclick=()=>{navigator.clipboard.writeText(pin.textContent);copy.textContent='copied';setTimeout(()=>copy.textContent='copy',1200)};
