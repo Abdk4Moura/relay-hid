@@ -30,10 +30,33 @@ class MainActivity : ComponentActivity() {
             if (permsGranted) startHid()
         }
 
+    private val pickFile =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null && ::controller.isInitialized) {
+                Thread {
+                    val r = readUri(uri) ?: return@Thread
+                    controller.wifiSendFile(r.first, r.second)
+                }.start()
+            }
+        }
+
+    private fun readUri(uri: android.net.Uri): Pair<String, ByteArray>? {
+        val cr = contentResolver
+        val bytes = runCatching { cr.openInputStream(uri)?.use { it.readBytes() } }.getOrNull() ?: return null
+        var name = "file"
+        runCatching {
+            cr.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx)?.let { name = it }
+            }
+        }
+        return name to bytes
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        controller = RelayController(applicationContext)
+        controller = RelayController.getInstance(applicationContext)
 
         // Adaptive: allow rotation so portrait gives the thumb keyboard and
         // landscape gives the full desktop layout. (Respects the user's rotation lock.)
@@ -51,6 +74,7 @@ class MainActivity : ComponentActivity() {
                         runCatching { startActivity(controller.discoverableIntent()) }
                     },
                     onRequestPerms = { ensurePermissions() },
+                    onPickFile = { runCatching { pickFile.launch("*/*") } },
                 )
             }
         }

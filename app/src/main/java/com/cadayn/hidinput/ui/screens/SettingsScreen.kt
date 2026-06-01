@@ -133,6 +133,18 @@ fun SettingsScreen(c: RelayController) {
                 }
                 if (c.renameBt) BtNameField(c)
             }
+
+            Group("WiFi & sync") {
+                SettingRow("Receive desktop clipboard", "Copies on the desktop set your phone clipboard automatically") {
+                    RelaySwitch(c.clipboardAuto, c::updateClipboardAuto)
+                }
+                SettingRow("Sync notifications", "One self-replacing alert when a clipboard/file syncs — never piles up") {
+                    RelaySwitch(c.notifySync, c::updateNotifySync)
+                }
+                SettingRow("Share to Relay", "Share text or files to “Relay” from any app to send them to the desktop") {
+                    Text("share sheet", style = Relay.type.mono.copy(color = Relay.colors.textDim, fontSize = 11.sp))
+                }
+            }
             Spacer(Modifier.height(30.dp))
         }
     }

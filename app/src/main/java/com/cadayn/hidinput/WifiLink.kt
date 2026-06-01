@@ -62,6 +62,7 @@ class WifiLink {
     }
 
     fun clip(s: String) = send("""{"t":"clip","s":"${esc(s)}"}""")
+    fun file(name: String, b64: String) = send("""{"t":"file","name":"${esc(name)}","data":"$b64"}""")
 
     fun disconnect() {
         worker.execute { closeQuietly(); connected = false; host = null }

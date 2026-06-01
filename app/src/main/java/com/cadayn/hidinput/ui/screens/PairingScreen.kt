@@ -47,7 +47,7 @@ import com.cadayn.hidinput.ui.components.TText
 import com.cadayn.hidinput.ui.theme.Relay
 
 @Composable
-fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit) {
+fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit, onPickFile: () -> Unit = {}) {
     val col = Relay.colors
     val devices = remember(c.registered, c.conn) { c.pairedDevices }
 
@@ -93,12 +93,12 @@ fun PairingScreen(c: RelayController, onMakeDiscoverable: () -> Unit) {
         }
 
         Spacer(Modifier.height(22.dp))
-        WifiPanel(c)
+        WifiPanel(c, onPickFile)
     }
 }
 
 @Composable
-private fun WifiPanel(c: RelayController) {
+private fun WifiPanel(c: RelayController, onPickFile: () -> Unit) {
     val col = Relay.colors
     var ip by remember { mutableStateOf(c.wifiHost ?: "") }
     var pin by remember { mutableStateOf("") }
@@ -135,11 +135,9 @@ private fun WifiPanel(c: RelayController) {
             RelayButton("Connect", { if (ip.isNotBlank()) c.wifiConnect(ip.trim(), 47600, pin.trim()) }, kind = BtnKind.Primary)
         } else {
             Text("→ ${c.wifiHost}  ·  input now goes over WiFi", style = Relay.type.mono.copy(color = col.textDim, fontSize = 12.5.sp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RelayButton("Send clipboard →", { c.wifiSendClipboard() }, kind = BtnKind.Secondary)
-                RelayButton("Disconnect", { c.wifiDisconnect() }, kind = BtnKind.Ghost)
-            }
-            TText("Copies on the desktop arrive on your phone automatically.", Relay.type.sub.copy(fontSize = 11.5.sp), col.textFaint)
+            RelayButton("Disconnect", { c.wifiDisconnect() }, kind = BtnKind.Secondary)
+            TText("Share text or files to “Relay” from any app to send them to the desktop. Desktop copies arrive on your phone automatically.",
+                Relay.type.sub.copy(fontSize = 11.5.sp), col.textFaint)
         }
     }
 }

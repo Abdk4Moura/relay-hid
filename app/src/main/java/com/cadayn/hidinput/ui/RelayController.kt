@@ -25,7 +25,16 @@ data class ActivityEvent(val id: Long, val time: String, val type: String, val t
  * Single source of truth for Relay's UI: wraps [HidPeripheralManager], exposes Compose
  * state, and persists user settings. HID callbacks are marshalled onto the main thread.
  */
-class RelayController(private val context: Context) : HidPeripheralManager.Listener {
+class RelayController private constructor(private val context: Context) : HidPeripheralManager.Listener {
+
+    companion object {
+        @Volatile private var INSTANCE: RelayController? = null
+        /** Process-wide so the main UI, the share-target activity and the QS tile share one WiFi link. */
+        fun getInstance(context: Context): RelayController =
+            INSTANCE ?: synchronized(this) {
+                INSTANCE ?: RelayController(context.applicationContext).also { INSTANCE = it }
+            }
+    }
 
     private val prefs = context.getSharedPreferences("relay", Context.MODE_PRIVATE)
     private val main = Handler(Looper.getMainLooper())
@@ -47,10 +56,45 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     }
 
     private fun setPhoneClipboard(text: String) {
-        if (text.isEmpty()) return
+        if (text.isEmpty() || !clipboardAuto) return
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
         cm.setPrimaryClip(android.content.ClipData.newPlainText("Relay", text))
         logEvent("key", "clipboard ← desktop (${text.length})")
+        postSyncNotification("Copied from desktop", text.take(80))
+    }
+
+    fun updateClipboardAuto(v: Boolean) { clipboardAuto = v; prefs.edit().putBoolean("clipboardAuto", v).apply() }
+    fun updateNotifySync(v: Boolean) { notifySync = v; prefs.edit().putBoolean("notifySync", v).apply() }
+
+    /** One self-replacing, auto-dismissing notification — only on an actual sync event, never persistent. */
+    private fun postSyncNotification(title: String, text: String) {
+        if (!notifySync) return
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(android.app.NotificationChannel("relay_sync", "Relay sync", android.app.NotificationManager.IMPORTANCE_LOW))
+        }
+        val n = android.app.Notification.Builder(context, "relay_sync")
+            .setSmallIcon(com.cadayn.hidinput.R.mipmap.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setTimeoutAfter(8000)
+            .build()
+        nm.notify(7001, n)   // fixed id → replaces, so it never piles up
+    }
+
+    /** Share-target entry: text shared to Relay → desktop clipboard. */
+    fun shareText(s: String) {
+        if (useWifi && s.isNotEmpty()) { wifi.clip(s); main.post { logEvent("key", "shared text → desktop"); postSyncNotification("Sent to desktop", s.take(80)) } }
+    }
+
+    /** Reconnect to the last WiFi desktop (Quick-Settings tile). */
+    fun reconnectLastWifi(): Boolean {
+        val ip = prefs.getString("lastWifiHost", null) ?: return false
+        val port = prefs.getInt("lastWifiPort", 47600)
+        val pin = wifiPinFor(ip)
+        if (pin.isEmpty()) return false
+        wifiConnect(ip, port, pin); return true
     }
 
     /** Push the phone's clipboard to the desktop (Android only lets us read it while focused). */
@@ -59,12 +103,26 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
         if (text.isNotEmpty() && useWifi) { wifi.clip(text); logEvent("key", "clipboard → desktop (${text.length})") }
     }
 
+    /** Send a picked file to the desktop (saved to its Downloads). Capped to keep it in memory. */
+    fun wifiSendFile(name: String, bytes: ByteArray) {
+        if (!useWifi) return
+        if (bytes.size > 8 * 1024 * 1024) { main.post { logEvent("key", "file too big (max 8MB)") }; return }
+        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        wifi.file(name, b64)
+        main.post { logEvent("key", "file → desktop ($name, ${bytes.size} B)") }
+    }
+    val wifiActive get() = useWifi
+
     fun wifiConnect(ip: String, port: Int, pin: String) {
         wifi.connect(ip, port, pin) { ok ->
             main.post {
                 wifiConnected = ok
                 transport = if (ok) "wifi" else "bt"
-                if (ok) { wifiHost = ip; saveWifiPin(ip, pin); logEvent("click", "WiFi → $ip") }
+                if (ok) {
+                    wifiHost = ip; saveWifiPin(ip, pin)
+                    prefs.edit().putString("lastWifiHost", ip).putInt("lastWifiPort", port).apply()
+                    logEvent("click", "WiFi → $ip")
+                }
             }
         }
     }
@@ -111,6 +169,8 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     var showArrowKeys by mutableStateOf(prefs.getBoolean("showArrowKeys", false)); private set  // landscape: dedicated arrow cluster vs. space-joystick
     var slideAnim by mutableStateOf(prefs.getBoolean("slideAnim", true)); private set            // animate the corner-slide highlight
     var padTimeout by mutableStateOf(prefs.getInt("padTimeout", 3)); private set                  // landscape full-trackpad auto-return (s); 0 = explicit only
+    var clipboardAuto by mutableStateOf(prefs.getBoolean("clipboardAuto", true)); private set     // accept desktop→phone clipboard
+    var notifySync by mutableStateOf(prefs.getBoolean("notifySync", true)); private set           // notify on clipboard/file sync
     var momentum by mutableStateOf(prefs.getBoolean("momentum", true)); private set
     var firmPress by mutableStateOf(prefs.getBoolean("firmPress", false)); private set         // firm tap → right-click
     var volumeKeys by mutableStateOf(prefs.getString("volumeKeys", "off")!!); private set      // off | scroll | page | click

@@ -44,6 +44,7 @@ enum Msg {
     Click { b: String },
     Consumer { usage: u16 },
     Clip { s: String },
+    File { name: String, data: String },
 }
 
 const SYN: i32 = 0; // SYN_REPORT
@@ -219,6 +220,7 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
             Msg::Click { b } => format!("{b} click"),
             Msg::Consumer { usage } => format!("media 0x{usage:02x}"),
             Msg::Clip { s } => format!("clipboard ← {} chars", s.chars().count()),
+            Msg::File { ref name, .. } => format!("file ← {name}"),
             Msg::Hello { .. } => String::new(),
         };
         match msg {
@@ -230,6 +232,7 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
             Msg::Click { b } => inj.click(&b),
             Msg::Consumer { usage } => inj.consumer(usage),
             Msg::Clip { s } => { set_clip(&s); note(st, |st| st.last_clip = s); }
+            Msg::File { name, data } => save_file(&name, &data, st),
             Msg::Hello { .. } => {}
         }
         if !desc.is_empty() {
@@ -248,6 +251,38 @@ fn set_clip(s: &str) {
             let _ = si.write_all(s.as_bytes());
         }
         let _ = child.wait();
+    }
+}
+
+// ----------------------------- file drop -----------------------------
+fn download_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    std::path::PathBuf::from(home).join("Downloads")
+}
+
+fn save_file(name: &str, b64: &str, st: &Shared) {
+    use base64::Engine;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    let safe = name.rsplit(['/', '\\']).next().unwrap_or("file");
+    let safe = if safe.is_empty() { "file" } else { safe };
+    let dir = download_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let mut path = dir.join(safe);
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("relay-{n}-{safe}"));
+        n += 1;
+    }
+    if std::fs::write(&path, &bytes).is_ok() {
+        let p = path.display().to_string();
+        println!("⬇ file saved: {p} ({} bytes)", bytes.len());
+        let _ = Command::new("notify-send")
+            .args(["Relay", &format!("Received {safe} → Downloads")])
+            .spawn();
+        note(st, |s| s.last = format!("file ← {safe} ({} B)", bytes.len()));
     }
 }
 
