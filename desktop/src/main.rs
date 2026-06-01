@@ -383,6 +383,9 @@ fn main() {
         thread::spawn(move || clipboard_sync_loop(st));
     }
 
+    // system-tray icon (click → open panel)
+    start_tray(ui_port);
+
     println!("┌─────────────────────────────────────────");
     println!("│ Relay desktop receiver");
     println!("│ Listening on 0.0.0.0:{port}");
@@ -397,6 +400,68 @@ fn main() {
             Err(e) => eprintln!("accept error: {e}"),
         }
     }
+}
+
+// ----------------------------- system tray (StatusNotifierItem via zbus) -----------------------------
+struct Sni {
+    url: String,
+}
+
+#[zbus::interface(name = "org.kde.StatusNotifierItem")]
+impl Sni {
+    #[zbus(property)]
+    fn category(&self) -> String { "ApplicationStatus".into() }
+    #[zbus(property)]
+    fn id(&self) -> String { "relay-desktop".into() }
+    #[zbus(property)]
+    fn title(&self) -> String { "Relay Desktop".into() }
+    #[zbus(property)]
+    fn status(&self) -> String { "Active".into() }
+    #[zbus(property)]
+    fn icon_name(&self) -> String { "relay-desktop".into() }
+    #[zbus(property)]
+    fn item_is_menu(&self) -> bool { false }
+    #[zbus(property)]
+    fn menu(&self) -> zbus::zvariant::OwnedObjectPath {
+        zbus::zvariant::ObjectPath::try_from("/MenuBar").unwrap().into()
+    }
+    fn activate(&self, _x: i32, _y: i32) {
+        let _ = Command::new("xdg-open").arg(&self.url).spawn();
+    }
+    fn secondary_activate(&self, _x: i32, _y: i32) {
+        let _ = Command::new("xdg-open").arg(&self.url).spawn();
+    }
+    fn context_menu(&self, _x: i32, _y: i32) {}
+    fn scroll(&self, _delta: i32, _orientation: String) {}
+}
+
+fn start_tray(ui_port: u16) {
+    thread::spawn(move || {
+        let url = format!("http://127.0.0.1:{ui_port}");
+        let conn = match zbus::blocking::connection::Builder::session()
+            .and_then(|b| b.serve_at("/StatusNotifierItem", Sni { url }))
+            .and_then(|b| b.build())
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
+        if conn.request_name(name.as_str()).is_err() {
+            return;
+        }
+        if let Ok(p) = zbus::blocking::Proxy::new(
+            &conn,
+            "org.kde.StatusNotifierWatcher",
+            "/StatusNotifierWatcher",
+            "org.kde.StatusNotifierWatcher",
+        ) {
+            let _: Result<(), _> = p.call("RegisterStatusNotifierItem", &name);
+            println!("│ tray: registered StatusNotifierItem");
+        }
+        loop {
+            thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    });
 }
 
 fn hostname() -> String {
