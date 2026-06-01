@@ -56,6 +56,13 @@ class RelayController private constructor(private val context: Context) : HidPer
     init {
         // desktop clipboard pushes arrive here → set the phone clipboard
         wifi.onClip = { text -> main.post { setPhoneClipboard(text) } }
+        // desktop acked a dropped file → tell the user it landed (or didn't)
+        wifi.onFileAck = { ok, name ->
+            main.post {
+                if (ok) { logEvent("key", "file delivered → $name"); postSyncNotification("Sent to desktop", "$name → Downloads") }
+                else { logEvent("key", "file failed → $name"); postSyncNotification("Couldn’t send file", name) }
+            }
+        }
         // link dropped unexpectedly → reflect it and try to come back automatically
         wifi.onDisconnect = {
             main.post {
@@ -160,11 +167,16 @@ class RelayController private constructor(private val context: Context) : HidPer
 
     /** Send a picked file to the desktop (saved to its Downloads). Capped to keep it in memory. */
     fun wifiSendFile(name: String, bytes: ByteArray) {
-        if (!useWifi) return
-        if (bytes.size > 8 * 1024 * 1024) { main.post { logEvent("key", "file too big (max 8MB)") }; return }
+        if (!useWifi) { main.post { postSyncNotification("Not connected", "Connect to a desktop to send files") }; return }
+        val maxMb = 16
+        if (bytes.size > maxMb * 1024 * 1024) {
+            main.post { logEvent("key", "file too big: $name"); postSyncNotification("File too large", "$name is over ${maxMb} MB") }
+            return
+        }
+        // tell the user it's in flight; the desktop's ack (onFileAck) flips this to “Sent ✓”
+        main.post { logEvent("key", "sending $name (${bytes.size / 1024} KB)…"); postSyncNotification("Sending to desktop…", name) }
         val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
         wifi.file(name, b64)
-        main.post { logEvent("key", "file → desktop ($name, ${bytes.size} B)") }
     }
     val wifiActive get() = useWifi
 

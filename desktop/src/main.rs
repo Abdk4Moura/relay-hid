@@ -285,7 +285,10 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared) {
         match msg {
             Msg::Ping {} => {} // heartbeat: presence only — keeps the read window from expiring
             Msg::Clip { s } => { set_clip(&s); note(st, |st| st.last_clip = s); }
-            Msg::File { name, data } => save_file(&name, &data, st),
+            Msg::File { name, data } => match save_file(&name, &data, st) {
+                Ok((fname, n)) => push_to_phone(st, &format!("{{\"t\":\"fileok\",\"name\":\"{}\",\"size\":{}}}\n", json_escape(&fname), n)),
+                Err(e) => push_to_phone(st, &format!("{{\"t\":\"fileerr\",\"name\":\"{}\",\"msg\":\"{}\"}}\n", json_escape(&name), json_escape(&e))),
+            },
             Msg::Hello { .. } => {}
             other => {
                 if let Ok(mut g) = inj.lock() {
@@ -345,12 +348,48 @@ fn download_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join("Downloads")
 }
 
-fn save_file(name: &str, b64: &str, st: &Shared) {
+/// Send one newline-JSON line down to the connected phone, serialized via the status lock
+/// so it never interleaves with the clipboard push on the shared socket.
+fn push_to_phone(status: &Shared, line: &str) {
+    if let Ok(s) = status.lock() {
+        if let Some(tx) = s.tx.as_ref() {
+            let mut t: &TcpStream = tx;
+            let _ = t.write_all(line.as_bytes());
+            let _ = t.flush();
+        }
+    }
+}
+
+/// Pop a native desktop notification via org.freedesktop.Notifications (works on COSMIC/GNOME/KDE
+/// with no external dependency); fall back to notify-send if the bus call fails.
+fn notify_desktop(summary: &str, body: &str) {
+    let sent = (|| -> zbus::Result<()> {
+        let conn = zbus::blocking::Connection::session()?;
+        let proxy = zbus::blocking::Proxy::new(
+            &conn,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        )?;
+        let hints: std::collections::HashMap<&str, zbus::zvariant::Value> = std::collections::HashMap::new();
+        let _: u32 = proxy.call(
+            "Notify",
+            &("Relay", 0u32, "relay-desktop", summary, body, Vec::<&str>::new(), hints, 5000i32),
+        )?;
+        Ok(())
+    })()
+    .is_ok();
+    if !sent {
+        let _ = Command::new("notify-send").args([summary, body]).spawn();
+    }
+}
+
+/// Decode + save a dropped file to ~/Downloads. Returns (final filename, byte count) on success.
+fn save_file(name: &str, b64: &str, st: &Shared) -> Result<(String, usize), String> {
     use base64::Engine;
-    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
-        Ok(b) => b,
-        Err(_) => return,
-    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|_| "decode failed".to_string())?;
     let safe = name.rsplit(['/', '\\']).next().unwrap_or("file");
     let safe = if safe.is_empty() { "file" } else { safe };
     let dir = download_dir();
@@ -361,14 +400,12 @@ fn save_file(name: &str, b64: &str, st: &Shared) {
         path = dir.join(format!("relay-{n}-{safe}"));
         n += 1;
     }
-    if std::fs::write(&path, &bytes).is_ok() {
-        let p = path.display().to_string();
-        println!("⬇ file saved: {p} ({} bytes)", bytes.len());
-        let _ = Command::new("notify-send")
-            .args(["Relay", &format!("Received {safe} → Downloads")])
-            .spawn();
-        note(st, |s| s.last = format!("file ← {safe} ({} B)", bytes.len()));
-    }
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or(safe).to_string();
+    println!("⬇ file saved: {} ({} bytes)", path.display(), bytes.len());
+    notify_desktop("Relay", &format!("Received {fname} → Downloads"));
+    note(st, |s| s.last = format!("file ← {fname} ({} B)", bytes.len()));
+    Ok((fname, bytes.len()))
 }
 
 fn get_clip() -> String {

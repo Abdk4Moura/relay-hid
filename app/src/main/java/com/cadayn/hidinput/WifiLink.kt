@@ -21,6 +21,8 @@ class WifiLink {
 
     /** Called (off the main thread) with text the desktop pushed down (clipboard sync). */
     var onClip: ((String) -> Unit)? = null
+    /** Called (off the main thread) when the desktop acks a file (ok, name) — ok=false on failure. */
+    var onFileAck: ((Boolean, String) -> Unit)? = null
     /** Called (off the main thread) when the link drops *unexpectedly* (not a user disconnect). */
     var onDisconnect: (() -> Unit)? = null
 
@@ -69,7 +71,12 @@ class WifiLink {
                     if (line.isBlank()) continue
                     runCatching {
                         val o = org.json.JSONObject(line)
-                        if (o.optString("t") == "clip") onClip?.invoke(o.optString("s"))
+                        when (o.optString("t")) {
+                            "clip" -> onClip?.invoke(o.optString("s"))
+                            "fileok" -> onFileAck?.invoke(true, o.optString("name"))
+                            "fileerr" -> onFileAck?.invoke(false, o.optString("name"))
+                            else -> {}
+                        }
                     }
                 }
             }
