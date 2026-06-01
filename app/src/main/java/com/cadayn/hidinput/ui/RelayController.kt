@@ -31,6 +31,7 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     private val main = Handler(Looper.getMainLooper())
     private val hid = HidPeripheralManager.getInstance(context).also { it.listener = this }
     private val wifi = WifiLink()
+    val discovery = com.cadayn.hidinput.WifiDiscovery(context)
     private var seq = 0L
 
     // ---- transport (bt = HID, wifi = desktop receiver) ----
@@ -45,11 +46,15 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
             main.post {
                 wifiConnected = ok
                 transport = if (ok) "wifi" else "bt"
-                if (ok) { wifiHost = ip; logEvent("click", "WiFi → $ip") }
+                if (ok) { wifiHost = ip; saveWifiPin(ip, pin); logEvent("click", "WiFi → $ip") }
             }
         }
     }
     fun wifiDisconnect() { wifi.disconnect(); wifiConnected = false; wifiHost = null; transport = "bt"; wifiBtn = 0 }
+
+    /** Remember the PIN per host so a discovered desktop reconnects in one tap. */
+    fun wifiPinFor(ip: String): String = prefs.getString("wifipin_$ip", "") ?: ""
+    private fun saveWifiPin(ip: String, pin: String) { if (pin.isNotEmpty()) prefs.edit().putString("wifipin_$ip", pin).apply() }
 
     // ---- navigation / onboarding ----
     var onboarded by mutableStateOf(prefs.getBoolean("onboarded", false)); private set

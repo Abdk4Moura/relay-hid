@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -101,6 +102,7 @@ private fun WifiPanel(c: RelayController) {
     val col = Relay.colors
     var ip by remember { mutableStateOf(c.wifiHost ?: "") }
     var pin by remember { mutableStateOf("") }
+    DisposableEffect(Unit) { c.discovery.start(); onDispose { c.discovery.stop() } }
     Column(
         Modifier.fillMaxWidth().widthIn(max = 540.dp).clip(RoundedCornerShape(16.dp)).background(col.surface)
             .border(1.dp, if (c.wifiConnected) col.accentDim else col.border, RoundedCornerShape(16.dp)).padding(18.dp),
@@ -116,6 +118,16 @@ private fun WifiPanel(c: RelayController) {
         TText("Run the relay-desktop receiver on your computer, then enter its LAN IP + PIN.",
             Relay.type.sub.copy(fontSize = 12.sp), col.textFaint)
         if (!c.wifiConnected) {
+            if (c.discovery.hosts.isNotEmpty()) {
+                TText("FOUND ON YOUR NETWORK", Relay.type.label.copy(fontSize = 10.sp), col.textFaint)
+                c.discovery.hosts.forEach { h ->
+                    val saved = c.wifiPinFor(h.ip)
+                    FoundHost(h.name, h.ip, saved.isNotEmpty()) {
+                        if (saved.isNotEmpty()) c.wifiConnect(h.ip, h.port, saved)
+                        else { ip = h.ip }   // fill IP, just type the PIN once
+                    }
+                }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 WifiField(ip, "192.168.x.x", Modifier.weight(2f)) { ip = it.filter { ch -> ch.isDigit() || ch == '.' } }
                 WifiField(pin, "PIN", Modifier.weight(1f)) { pin = it.take(8) }
@@ -125,6 +137,24 @@ private fun WifiPanel(c: RelayController) {
             Text("→ ${c.wifiHost}  ·  input now goes over WiFi", style = Relay.type.mono.copy(color = col.textDim, fontSize = 12.5.sp))
             RelayButton("Disconnect", { c.wifiDisconnect() }, kind = BtnKind.Secondary)
         }
+    }
+}
+
+@Composable
+private fun FoundHost(name: String, ip: String, saved: Boolean, onClick: () -> Unit) {
+    val col = Relay.colors
+    val shape = RoundedCornerShape(11.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(col.bgDeep).border(1.dp, col.border, shape)
+            .clickable(onClick = onClick).padding(horizontal = 13.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(col.accent))
+        Column(Modifier.weight(1f)) {
+            Text(name, style = Relay.type.body.copy(color = col.text, fontSize = 13.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(ip, style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.5.sp))
+        }
+        Text(if (saved) "tap to connect" else "enter PIN ↓", style = Relay.type.mono.copy(color = if (saved) col.accent else col.textDim, fontSize = 10.5.sp))
     }
 }
 

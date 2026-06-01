@@ -1,6 +1,7 @@
 package com.cadayn.hidinput
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -39,6 +40,7 @@ class MainActivity : ComponentActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
 
         ensurePermissions()
+        handleDeepLink(intent)
 
         setContent {
             RelayTheme(dark = controller.dark, hue = controller.hue) {
@@ -58,6 +60,22 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // re-establish the HID link if it dropped while the screen was off
         if (::controller.isInitialized && permsGranted) controller.reconnect()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    /** relay://<ip>:<port>?pin=<pin> — scanned from the desktop control panel's QR. */
+    private fun handleDeepLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "relay") return
+        val host = data.host ?: return
+        val port = if (data.port > 0) data.port else 47600
+        val pin = data.getQueryParameter("pin") ?: ""
+        if (::controller.isInitialized) controller.wifiConnect(host, port, pin)
     }
 
     // Optional: repurpose the volume rocker (foreground only) — scroll / page / click.
