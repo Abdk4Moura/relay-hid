@@ -455,7 +455,7 @@ impl Sni {
     #[zbus(property)]
     fn icon_name(&self) -> String { "relay-desktop".into() }
     #[zbus(property)]
-    fn item_is_menu(&self) -> bool { false }
+    fn item_is_menu(&self) -> bool { true }
     #[zbus(property)]
     fn menu(&self) -> zbus::zvariant::OwnedObjectPath {
         zbus::zvariant::ObjectPath::try_from("/MenuBar").unwrap().into()
@@ -470,11 +470,106 @@ impl Sni {
     fn scroll(&self, _delta: i32, _orientation: String) {}
 }
 
+// com.canonical.dbusmenu — COSMIC's status-area applet is menu-driven: on click it pops
+// this menu rather than calling Activate. Without it the tray icon does nothing.
+struct DbusMenu {
+    url: String,
+}
+
+type MenuProps = std::collections::HashMap<String, zbus::zvariant::OwnedValue>;
+type MenuNode = (i32, MenuProps, Vec<zbus::zvariant::OwnedValue>);
+
+fn ov<T>(v: T) -> zbus::zvariant::OwnedValue
+where
+    T: Into<zbus::zvariant::Value<'static>>,
+{
+    zbus::zvariant::Value::from(v.into()).try_to_owned().unwrap()
+}
+
+fn leaf_props(label: &str) -> MenuProps {
+    let mut m = MenuProps::new();
+    m.insert("label".into(), ov(label.to_string()));
+    m.insert("enabled".into(), ov(true));
+    m.insert("visible".into(), ov(true));
+    m
+}
+
+fn leaf_node(id: i32, label: &str) -> zbus::zvariant::OwnedValue {
+    let node: MenuNode = (id, leaf_props(label), Vec::new());
+    zbus::zvariant::Value::from(node).try_to_owned().unwrap()
+}
+
+#[zbus::interface(name = "com.canonical.dbusmenu")]
+impl DbusMenu {
+    #[zbus(property)]
+    fn version(&self) -> u32 { 3 }
+    #[zbus(property)]
+    fn status(&self) -> String { "normal".into() }
+    #[zbus(property)]
+    fn text_direction(&self) -> String { "ltr".into() }
+    #[zbus(property)]
+    fn icon_theme_path(&self) -> Vec<String> { Vec::new() }
+
+    fn get_layout(
+        &self,
+        _parent_id: i32,
+        _recursion_depth: i32,
+        _property_names: Vec<String>,
+    ) -> (u32, MenuNode) {
+        let children = vec![
+            leaf_node(1, "Open Control Panel"),
+            leaf_node(2, "Quit Relay"),
+        ];
+        let root: MenuNode = (0, MenuProps::new(), children);
+        (1, root)
+    }
+
+    fn get_group_properties(
+        &self,
+        ids: Vec<i32>,
+        _property_names: Vec<String>,
+    ) -> Vec<(i32, MenuProps)> {
+        let label = |id: i32| match id {
+            1 => Some("Open Control Panel"),
+            2 => Some("Quit Relay"),
+            _ => None,
+        };
+        ids.into_iter()
+            .filter_map(|id| label(id).map(|l| (id, leaf_props(l))))
+            .collect()
+    }
+
+    fn get_property(&self, _id: i32, _name: String) -> zbus::zvariant::OwnedValue {
+        ov(true)
+    }
+
+    fn event(
+        &self,
+        id: i32,
+        event_id: String,
+        _data: zbus::zvariant::Value<'_>,
+        _timestamp: u32,
+    ) {
+        if event_id == "clicked" {
+            match id {
+                1 => {
+                    let _ = Command::new("xdg-open").arg(&self.url).spawn();
+                }
+                2 => std::process::exit(0),
+                _ => {}
+            }
+        }
+    }
+
+    fn about_to_show(&self, _id: i32) -> bool { false }
+}
+
 fn start_tray(ui_port: u16) {
     thread::spawn(move || {
         let url = format!("http://127.0.0.1:{ui_port}");
         let conn = match zbus::blocking::connection::Builder::session()
-            .and_then(|b| b.serve_at("/StatusNotifierItem", Sni { url }))
+            .and_then(|b| b.serve_at("/StatusNotifierItem", Sni { url: url.clone() }))
+            .and_then(|b| b.serve_at("/MenuBar", DbusMenu { url }))
             .and_then(|b| b.build())
         {
             Ok(c) => c,
