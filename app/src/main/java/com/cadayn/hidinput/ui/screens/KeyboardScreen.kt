@@ -131,13 +131,17 @@ private fun sysRowFor(profile: String): List<Sys> {
     val spot = Sys("spot", HidConstants.MOD_LGUI, HidConstants.KEY_SPACE)
     val appsCmd = Sys("apps", HidConstants.MOD_LGUI, HidConstants.KEY_TAB)
     val appsAlt = Sys("apps", HidConstants.MOD_LALT, HidConstants.KEY_TAB)
+    // Lone Super/Win press (key code 0 = modifier only) → Start menu / Activities. Single tap,
+    // unambiguous — no arming, no double-tap.
+    val start = Sys("Start", HidConstants.MOD_LGUI)
+    val superK = Sys("Super", HidConstants.MOD_LGUI)
     return when (profile) {
         "ipad" -> listOf(esc, spot, home, appsCmd) + media + bri
         "mac" -> listOf(esc, spot, appsCmd) + media + bri
         "appletv" -> listOf(Sys("menu", key = HidConstants.KEY_ESC), home) + media
         "androidtv" -> listOf(Sys("back", key = HidConstants.KEY_ESC), home) + media
-        "windows" -> listOf(esc, Sys("search", HidConstants.MOD_LGUI, HidKeymap.charToKey('s')!!.second), appsAlt) + media
-        "linux" -> listOf(esc, appsAlt) + media
+        "windows" -> listOf(esc, start, Sys("search", HidConstants.MOD_LGUI, HidKeymap.charToKey('s')!!.second), appsAlt) + media
+        "linux" -> listOf(esc, superK, appsAlt) + media
         "ps" -> listOf(home, Sys("play", cc = HidConstants.CC_PLAY_PAUSE), Sys("vol−", cc = HidConstants.CC_VOL_DOWN), Sys("mute", cc = HidConstants.CC_MUTE), Sys("vol+", cc = HidConstants.CC_VOL_UP))
         else -> listOf(esc) + media
     }
@@ -240,13 +244,12 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
             }
             "alt" -> alt = !alt
             "gui" -> {
-                val now = System.currentTimeMillis()
-                if (now - lastGuiTap < 320L) {
-                    // double-tap → send the GUI key alone (Windows Start menu / Mac Spotlight-launcher)
+                // Tap once to arm (for combos like Super+E); tap the armed key again to send the
+                // GUI key BY ITSELF → Start menu / Activities / Spotlight. No fiddly double-tap timing.
+                if (gui) {
                     val guiBit = if (c.swapCmd) HidConstants.MOD_LCTRL else HidConstants.MOD_LGUI
                     c.tapKey(guiBit, 0); c.logEvent("key", "${c.guiKey.first} (alone)"); gui = false
-                } else gui = !gui
-                lastGuiTap = now
+                } else gui = true
             }
             "caps" -> if (c.capsEsc) emit("esc", 0, HidConstants.KEY_ESC, null) else caps = !caps
         }

@@ -202,7 +202,11 @@ private fun Group(title: String, expanded: androidx.compose.runtime.MutableState
             Text("▸", style = Relay.type.mono.copy(color = if (open) col.accent else col.textFaint, fontSize = 13.sp),
                 modifier = Modifier.rotate(rot))
         }
-        androidx.compose.animation.AnimatedVisibility(open) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = open,
+            enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(160)),
+            exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(140)),
+        ) {
             Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) { content() }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(col.border))
