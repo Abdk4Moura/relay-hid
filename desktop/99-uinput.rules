@@ -1,0 +1,2 @@
+# Allow members of the "input" group to use /dev/uinput (Relay desktop receiver).
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
