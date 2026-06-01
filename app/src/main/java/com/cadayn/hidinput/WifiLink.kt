@@ -17,23 +17,29 @@ class WifiLink {
     @Volatile private var out: OutputStream? = null
     @Volatile var connected = false; private set
     @Volatile var host: String? = null; private set
+    @Volatile private var intentional = false
 
     /** Called (off the main thread) with text the desktop pushed down (clipboard sync). */
     var onClip: ((String) -> Unit)? = null
+    /** Called (off the main thread) when the link drops *unexpectedly* (not a user disconnect). */
+    var onDisconnect: (() -> Unit)? = null
 
     fun connect(ip: String, port: Int, token: String, onResult: (Boolean) -> Unit) {
         worker.execute {
             closeQuietly()
+            intentional = false
             try {
                 val s = Socket()
                 s.connect(InetSocketAddress(ip, port), 3000)
                 s.tcpNoDelay = true
+                s.keepAlive = true
                 out = s.getOutputStream()
                 socket = s
                 host = ip
                 writeLine("""{"t":"hello","token":"${esc(token)}"}""")
                 connected = true
                 startReader(s)
+                startHeartbeat()
                 onResult(true)
             } catch (e: Exception) {
                 connected = false
@@ -41,6 +47,16 @@ class WifiLink {
                 onResult(false)
             }
         }
+    }
+
+    /** App-level heartbeat so the desktop can tell a live-but-idle phone from a dead socket. */
+    private fun startHeartbeat() {
+        Thread {
+            while (connected) {
+                try { Thread.sleep(4000) } catch (_: InterruptedException) { break }
+                if (connected) send("""{"t":"ping"}""")
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     /** Reverse channel: read newline-JSON the desktop sends (currently clipboard). */
@@ -57,7 +73,9 @@ class WifiLink {
                     }
                 }
             }
+            val wasConnected = connected
             connected = false
+            if (wasConnected && !intentional) onDisconnect?.invoke()
         }.apply { isDaemon = true }.start()
     }
 
@@ -65,6 +83,7 @@ class WifiLink {
     fun file(name: String, b64: String) = send("""{"t":"file","name":"${esc(name)}","data":"$b64"}""")
 
     fun disconnect() {
+        intentional = true
         worker.execute { closeQuietly(); connected = false; host = null }
     }
 

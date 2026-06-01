@@ -50,9 +50,55 @@ class RelayController private constructor(private val context: Context) : HidPer
     private var wifiBtn = 0
     private val useWifi get() = transport == "wifi" && wifi.connected
 
+    @Volatile private var wantWifi = false          // user intends to be on WiFi (drives auto-reconnect)
+    @Volatile private var reconnecting = false
+
     init {
         // desktop clipboard pushes arrive here → set the phone clipboard
         wifi.onClip = { text -> main.post { setPhoneClipboard(text) } }
+        // link dropped unexpectedly → reflect it and try to come back automatically
+        wifi.onDisconnect = {
+            main.post {
+                wifiConnected = false
+                if (transport == "wifi") { transport = "bt"; logEvent("key", "WiFi link dropped — reconnecting…") }
+            }
+            if (wantWifi) autoReconnectWifi()
+        }
+    }
+
+    /** Reconnect to the last desktop with capped backoff until it sticks or the user leaves WiFi. */
+    private fun autoReconnectWifi() {
+        if (reconnecting) return
+        reconnecting = true
+        Thread {
+            var delay = 800L
+            var attempts = 0
+            while (wantWifi && !wifi.connected && attempts < 8) {
+                try { Thread.sleep(delay) } catch (_: InterruptedException) {}
+                if (!wantWifi) break
+                val ip = prefs.getString("lastWifiHost", null)
+                val port = prefs.getInt("lastWifiPort", 47600)
+                val pin = if (ip != null) wifiPinFor(ip) else ""
+                if (ip == null || pin.isEmpty()) break
+                val latch = java.util.concurrent.CountDownLatch(1)
+                wifi.connect(ip, port, pin) { ok ->
+                    main.post {
+                        wifiConnected = ok
+                        if (ok) { transport = "wifi"; wifiHost = ip; logEvent("click", "WiFi reconnected → $ip") }
+                    }
+                    latch.countDown()
+                }
+                try { latch.await(5, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) {}
+                attempts++
+                delay = (delay * 2).coerceAtMost(8000L)
+            }
+            reconnecting = false
+        }.apply { isDaemon = true }.start()
+    }
+
+    /** Called when the app returns to the foreground: if we want WiFi but the link is down, restore it. */
+    fun ensureWifi() {
+        if (wantWifi && !wifi.connected) autoReconnectWifi()
     }
 
     private fun setPhoneClipboard(text: String) {
@@ -114,6 +160,7 @@ class RelayController private constructor(private val context: Context) : HidPer
     val wifiActive get() = useWifi
 
     fun wifiConnect(ip: String, port: Int, pin: String) {
+        wantWifi = true
         wifi.connect(ip, port, pin) { ok ->
             main.post {
                 wifiConnected = ok
@@ -126,7 +173,7 @@ class RelayController private constructor(private val context: Context) : HidPer
             }
         }
     }
-    fun wifiDisconnect() { wifi.disconnect(); wifiConnected = false; wifiHost = null; transport = "bt"; wifiBtn = 0 }
+    fun wifiDisconnect() { wantWifi = false; wifi.disconnect(); wifiConnected = false; wifiHost = null; transport = "bt"; wifiBtn = 0 }
 
     /** Remember the PIN per host so a discovered desktop reconnects in one tap. */
     fun wifiPinFor(ip: String): String = prefs.getString("wifipin_$ip", "") ?: ""

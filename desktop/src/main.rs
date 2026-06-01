@@ -9,10 +9,15 @@
 //!   {"t":"text","s":"hello world"}              // type a UTF-8 string
 //!   {"t":"key","code":40,"mods":8}              // HID usage code + HID modifier bitmask
 //!   {"t":"move","dx":12,"dy":-4}                // relative pointer move
+//!   {"t":"moveto","x":16384,"y":8000}           // ABSOLUTE pointer position, normalized 0..32767
 //!   {"t":"scroll","dy":2}                       // wheel
 //!   {"t":"button","b":"left","down":true}       // hold/release a mouse button
 //!   {"t":"click","b":"right"}                   // press+release
 //!   {"t":"consumer","usage":205}               // media/brightness (Consumer page)
+//!
+//! The `moveto` message backs the computer-use agent (agent/ — see repo): vision models
+//! emit ABSOLUTE click targets, which a relative-only mouse can't hit reliably. It drives
+//! a second virtual device exposing absolute axes (0..32767 spanning the screen).
 //!
 //! Build:  cargo build --release
 //! Run:    ./target/release/relay-desktop --token 1234 --port 47600
@@ -26,7 +31,8 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use evdev::{
-    uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, Key, RelativeAxisType,
+    uinput::VirtualDeviceBuilder, AbsInfo, AbsoluteAxisType, AttributeSet, EventType, InputEvent,
+    Key, RelativeAxisType, UinputAbsSetup,
 };
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use qrcode::{render::svg, QrCode};
@@ -39,15 +45,21 @@ enum Msg {
     Text { s: String },
     Key { code: u16, #[serde(default)] mods: u8 },
     Move { dx: i32, dy: i32 },
+    Moveto { x: i32, y: i32 },
     Scroll { dy: i32 },
     Button { b: String, down: bool },
     Click { b: String },
     Consumer { usage: u16 },
     Clip { s: String },
     File { name: String, data: String },
+    Ping {},
 }
 
 const SYN: i32 = 0; // SYN_REPORT
+const ABS_MAX: i32 = 32767; // absolute-axis full-scale; agent normalizes pixels into this range
+/// Drop a connection if no data (incl. heartbeat ping) arrives within this window.
+/// Must exceed the phone's heartbeat interval (~4s) with margin.
+const CLIENT_TIMEOUT_SECS: u64 = 12;
 
 /// Shared state surfaced to the web control panel.
 struct Status {
@@ -61,11 +73,15 @@ struct Status {
     last_clip: String,       // last clipboard value synced, to avoid echo loops
 }
 type Shared = Arc<Mutex<Status>>;
+type SharedInj = Arc<Mutex<Injector>>;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct Injector {
     dev: evdev::uinput::VirtualDevice,
+    /// Separate absolute-pointer device for `moveto` (computer-use agent). Optional: if the
+    /// kernel/compositor rejects it we degrade gracefully and ignore `moveto`.
+    abs_dev: Option<evdev::uinput::VirtualDevice>,
 }
 
 impl Injector {
@@ -83,7 +99,11 @@ impl Injector {
             .with_keys(&keys)?
             .with_relative_axes(&axes)?
             .build()?;
-        Ok(Self { dev })
+        let abs_dev = build_abs_device().unwrap_or_else(|e| {
+            eprintln!("(absolute pointer disabled — `moveto` will be ignored: {e})");
+            None
+        });
+        Ok(Self { dev, abs_dev })
     }
 
     fn emit(&mut self, events: &[InputEvent]) {
@@ -140,6 +160,19 @@ impl Injector {
         self.flush();
     }
 
+    /// Jump the pointer to an absolute screen position. `x`/`y` are normalized to 0..ABS_MAX
+    /// (the agent maps screen pixels into this range, so the relay stays resolution-agnostic).
+    fn move_abs(&mut self, x: i32, y: i32) {
+        let Some(dev) = self.abs_dev.as_mut() else { return };
+        let x = x.clamp(0, ABS_MAX);
+        let y = y.clamp(0, ABS_MAX);
+        let _ = dev.emit(&[
+            InputEvent::new(EventType::ABSOLUTE, AbsoluteAxisType::ABS_X.0, x),
+            InputEvent::new(EventType::ABSOLUTE, AbsoluteAxisType::ABS_Y.0, y),
+            InputEvent::new(EventType::SYNCHRONIZATION, SYN as u16, 0),
+        ]);
+    }
+
     fn scroll(&mut self, dy: i32) {
         self.emit(&[InputEvent::new(
             EventType::RELATIVE,
@@ -173,15 +206,40 @@ impl Injector {
     }
 }
 
+/// Build the absolute-pointer virtual device used by `moveto`. Declares mouse buttons too so
+/// libinput classifies it as a pointer (not a touchscreen needing calibration); a single system
+/// cursor is shared with the relative device, so existing click/button events land at the
+/// position set here.
+fn build_abs_device() -> std::io::Result<Option<evdev::uinput::VirtualDevice>> {
+    let mut btns = AttributeSet::<Key>::new();
+    btns.insert(Key::BTN_LEFT);
+    btns.insert(Key::BTN_RIGHT);
+    btns.insert(Key::BTN_MIDDLE);
+    let info = AbsInfo::new(0, 0, ABS_MAX, 0, 0, 0);
+    let abs_x = UinputAbsSetup::new(AbsoluteAxisType::ABS_X, info);
+    let abs_y = UinputAbsSetup::new(AbsoluteAxisType::ABS_Y, info);
+    let dev = VirtualDeviceBuilder::new()?
+        .name("Relay Virtual Pointer (abs)")
+        .with_keys(&btns)?
+        .with_absolute_axis(&abs_x)?
+        .with_absolute_axis(&abs_y)?
+        .build()?;
+    Ok(Some(dev))
+}
+
 fn note(st: &Shared, f: impl FnOnce(&mut Status)) {
     if let Ok(mut s) = st.lock() {
         f(&mut s);
     }
 }
 
-fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
+fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared) {
     let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
     let writer = stream.try_clone().ok();
+    // Reap dead/half-open peers: if no byte (incl. heartbeat ping) arrives within the
+    // window, the read errors out and we drop the connection — so a backgrounded phone
+    // or a network blip can never wedge the receiver and block reconnects.
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(CLIENT_TIMEOUT_SECS)));
     let mut authed = false;
     let reader = BufReader::new(stream);
     for line in reader.lines() {
@@ -215,32 +273,50 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
             Msg::Text { s } => format!("type \"{}\"", s.chars().take(24).collect::<String>()),
             Msg::Key { code, mods } => format!("key 0x{code:02x} mods 0x{mods:02x}"),
             Msg::Move { .. } => "move".into(),
+            Msg::Moveto { x, y } => format!("moveto {x},{y}"),
             Msg::Scroll { .. } => "scroll".into(),
             Msg::Button { b, down } => format!("{b} {}", if *down { "down" } else { "up" }),
             Msg::Click { b } => format!("{b} click"),
             Msg::Consumer { usage } => format!("media 0x{usage:02x}"),
             Msg::Clip { s } => format!("clipboard ← {} chars", s.chars().count()),
             Msg::File { ref name, .. } => format!("file ← {name}"),
-            Msg::Hello { .. } => String::new(),
+            Msg::Hello { .. } | Msg::Ping {} => String::new(),
         };
         match msg {
-            Msg::Text { s } => inj.text(&s),
-            Msg::Key { code, mods } => inj.tap_hid(code, mods),
-            Msg::Move { dx, dy } => inj.move_rel(dx, dy),
-            Msg::Scroll { dy } => inj.scroll(dy),
-            Msg::Button { b, down } => inj.button(&b, down),
-            Msg::Click { b } => inj.click(&b),
-            Msg::Consumer { usage } => inj.consumer(usage),
+            Msg::Ping {} => {} // heartbeat: presence only — keeps the read window from expiring
             Msg::Clip { s } => { set_clip(&s); note(st, |st| st.last_clip = s); }
             Msg::File { name, data } => save_file(&name, &data, st),
             Msg::Hello { .. } => {}
+            other => {
+                if let Ok(mut g) = inj.lock() {
+                    match other {
+                        Msg::Text { s } => g.text(&s),
+                        Msg::Key { code, mods } => g.tap_hid(code, mods),
+                        Msg::Move { dx, dy } => g.move_rel(dx, dy),
+                        Msg::Moveto { x, y } => g.move_abs(x, y),
+                        Msg::Scroll { dy } => g.scroll(dy),
+                        Msg::Button { b, down } => g.button(&b, down),
+                        Msg::Click { b } => g.click(&b),
+                        Msg::Consumer { usage } => g.consumer(usage),
+                        _ => {}
+                    }
+                }
+            }
         }
         if !desc.is_empty() {
             note(st, |s| { s.events += 1; s.last = desc; });
         }
     }
     println!("— {peer} disconnected");
-    note(st, |s| { s.connected = None; s.last = "idle".into(); s.tx = None; });
+    // Only clear status if WE are the active connection; a stale/timed-out peer must not
+    // wipe the state of a newer client that already took over.
+    note(st, |s| {
+        if s.connected.as_deref() == Some(peer.as_str()) {
+            s.connected = None;
+            s.last = "idle".into();
+            s.tx = None;
+        }
+    });
 }
 
 // ----------------------------- clipboard -----------------------------
@@ -373,8 +449,8 @@ fn main() {
         .or_else(|| std::env::var("RELAY_TOKEN").ok())
         .unwrap_or_else(load_or_create_token);
 
-    let mut inj = match Injector::new() {
-        Ok(i) => i,
+    let inj: SharedInj = match Injector::new() {
+        Ok(i) => Arc::new(Mutex::new(i)),
         Err(e) => {
             eprintln!("Failed to open /dev/uinput: {e}\nGrant access (see README) or run with sudo.");
             std::process::exit(1);
@@ -429,9 +505,17 @@ fn main() {
     println!("│ In the Relay app enter this host's IP + the PIN.");
     println!("└─────────────────────────────────────────");
 
+    let token = Arc::new(token);
     for stream in listener.incoming() {
         match stream {
-            Ok(s) => handle(s, &token, &mut inj, &status),
+            Ok(s) => {
+                // Each connection gets its own thread so a slow/dead peer can never block
+                // accepting (and servicing) a fresh reconnect. The injector is shared.
+                let inj = Arc::clone(&inj);
+                let token = Arc::clone(&token);
+                let status = Arc::clone(&status);
+                thread::spawn(move || handle(s, &token, &inj, &status));
+            }
             Err(e) => eprintln!("accept error: {e}"),
         }
     }

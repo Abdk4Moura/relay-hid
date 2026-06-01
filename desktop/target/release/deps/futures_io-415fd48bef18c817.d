@@ -1,0 +1,7 @@
+/root/android-hid-input/desktop/target/release/deps/futures_io-415fd48bef18c817.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-io-0.3.32/src/lib.rs
+
+/root/android-hid-input/desktop/target/release/deps/libfutures_io-415fd48bef18c817.rlib: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-io-0.3.32/src/lib.rs
+
+/root/android-hid-input/desktop/target/release/deps/libfutures_io-415fd48bef18c817.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-io-0.3.32/src/lib.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/futures-io-0.3.32/src/lib.rs:

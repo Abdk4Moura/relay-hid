@@ -1301,19 +1301,23 @@ private fun GyroPad(c: RelayController, modifier: Modifier, onClick: () -> Unit)
                     smX = 0f; smY = 0f
                     return
                 }
-                val dead = 0.012f
+                val dead = 0.030f                                    // wider rest deadzone — ignore hand tremor / sensor noise
                 var ox = rawX - biasX; var oy = rawY - biasY
                 ox = if (abs(ox) < dead) 0f else ox - dead * (if (ox > 0) 1f else -1f)
                 oy = if (abs(oy) < dead) 0f else oy - dead * (if (oy > 0) 1f else -1f)
-                smX = smX * 0.35f + ox * 0.65f                       // low-pass
-                smY = smY * 0.35f + oy * 0.65f
-                val sens = c.sensitivity * 5f + 22f
+                smX = smX * 0.6f + ox * 0.4f                         // heavier low-pass → calmer, less jitter
+                smY = smY * 0.6f + oy * 0.4f
+                // post-smoothing noise gate: residual jitter must not crawl the cursor
+                val floor = 0.012f
+                val nx = if (abs(smX) < floor) 0f else smX
+                val ny = if (abs(smY) < floor) 0f else smY
+                val sens = c.sensitivity * 4f + 10f                  // calmer base gain (was *5 + 22)
                 val acc = c.accel / 10f
-                val gx = sens * (1f + abs(smX) * acc * 2.2f)         // ballistic gain
-                val gy = sens * (1f + abs(smY) * acc * 2.2f)
+                val gx = sens * (1f + abs(nx) * acc * 1.5f)          // gentler ballistic gain
+                val gy = sens * (1f + abs(ny) * acc * 1.5f)
                 val ix = if (c.invertX) 1f else -1f
                 val iy = if (c.invertY) 1f else -1f
-                accX += ix * smX * gx; accY += iy * smY * gy
+                accX += ix * nx * gx; accY += iy * ny * gy
                 val dx = accX.roundToInt(); accX -= dx
                 val dy = accY.roundToInt(); accY -= dy
                 if (dx != 0 || dy != 0) c.mouseMove(dx, dy)

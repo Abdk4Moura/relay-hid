@@ -60,6 +60,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // re-establish the HID link if it dropped while the screen was off
         if (::controller.isInitialized && permsGranted) controller.reconnect()
+        // and the WiFi desktop link, if it dropped while backgrounded
+        if (::controller.isInitialized) controller.ensureWifi()
     }
 
     override fun onNewIntent(intent: Intent) {
