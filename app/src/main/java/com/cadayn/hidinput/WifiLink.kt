@@ -18,6 +18,9 @@ class WifiLink {
     @Volatile var connected = false; private set
     @Volatile var host: String? = null; private set
 
+    /** Called (off the main thread) with text the desktop pushed down (clipboard sync). */
+    var onClip: ((String) -> Unit)? = null
+
     fun connect(ip: String, port: Int, token: String, onResult: (Boolean) -> Unit) {
         worker.execute {
             closeQuietly()
@@ -30,6 +33,7 @@ class WifiLink {
                 host = ip
                 writeLine("""{"t":"hello","token":"${esc(token)}"}""")
                 connected = true
+                startReader(s)
                 onResult(true)
             } catch (e: Exception) {
                 connected = false
@@ -38,6 +42,26 @@ class WifiLink {
             }
         }
     }
+
+    /** Reverse channel: read newline-JSON the desktop sends (currently clipboard). */
+    private fun startReader(s: Socket) {
+        Thread {
+            runCatching {
+                val br = s.getInputStream().bufferedReader()
+                while (connected) {
+                    val line = br.readLine() ?: break
+                    if (line.isBlank()) continue
+                    runCatching {
+                        val o = org.json.JSONObject(line)
+                        if (o.optString("t") == "clip") onClip?.invoke(o.optString("s"))
+                    }
+                }
+            }
+            connected = false
+        }.apply { isDaemon = true }.start()
+    }
+
+    fun clip(s: String) = send("""{"t":"clip","s":"${esc(s)}"}""")
 
     fun disconnect() {
         worker.execute { closeQuietly(); connected = false; host = null }

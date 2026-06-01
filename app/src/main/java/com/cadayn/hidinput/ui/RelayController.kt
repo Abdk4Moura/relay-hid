@@ -41,6 +41,24 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     private var wifiBtn = 0
     private val useWifi get() = transport == "wifi" && wifi.connected
 
+    init {
+        // desktop clipboard pushes arrive here → set the phone clipboard
+        wifi.onClip = { text -> main.post { setPhoneClipboard(text) } }
+    }
+
+    private fun setPhoneClipboard(text: String) {
+        if (text.isEmpty()) return
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Relay", text))
+        logEvent("key", "clipboard ← desktop (${text.length})")
+    }
+
+    /** Push the phone's clipboard to the desktop (Android only lets us read it while focused). */
+    fun wifiSendClipboard() {
+        val text = clipboardText()
+        if (text.isNotEmpty() && useWifi) { wifi.clip(text); logEvent("key", "clipboard → desktop (${text.length})") }
+    }
+
     fun wifiConnect(ip: String, port: Int, pin: String) {
         wifi.connect(ip, port, pin) { ok ->
             main.post {

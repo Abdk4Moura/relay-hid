@@ -18,7 +18,7 @@
 //! Run:    ./target/release/relay-desktop --token 1234 --port 47600
 //! uinput needs access to /dev/uinput — see README (udev rule, or run with sudo).
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -43,6 +43,7 @@ enum Msg {
     Button { b: String, down: bool },
     Click { b: String },
     Consumer { usage: u16 },
+    Clip { s: String },
 }
 
 const SYN: i32 = 0; // SYN_REPORT
@@ -55,6 +56,8 @@ struct Status {
     connected: Option<String>,
     events: u64,
     last: String,
+    tx: Option<TcpStream>,   // write half of the active connection (for clipboard push)
+    last_clip: String,       // last clipboard value synced, to avoid echo loops
 }
 type Shared = Arc<Mutex<Status>>;
 
@@ -177,6 +180,7 @@ fn note(st: &Shared, f: impl FnOnce(&mut Status)) {
 
 fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
     let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+    let writer = stream.try_clone().ok();
     let mut authed = false;
     let reader = BufReader::new(stream);
     for line in reader.lines() {
@@ -196,7 +200,8 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
                 Msg::Hello { token: t } if t == token => {
                     authed = true;
                     println!("✓ {peer} authenticated");
-                    note(st, |s| { s.connected = Some(peer.clone()); s.last = "connected".into(); });
+                    let w = writer.as_ref().and_then(|s| s.try_clone().ok());
+                    note(st, |s| { s.connected = Some(peer.clone()); s.last = "connected".into(); s.tx = w; });
                     continue;
                 }
                 _ => {
@@ -213,6 +218,7 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
             Msg::Button { b, down } => format!("{b} {}", if *down { "down" } else { "up" }),
             Msg::Click { b } => format!("{b} click"),
             Msg::Consumer { usage } => format!("media 0x{usage:02x}"),
+            Msg::Clip { s } => format!("clipboard ← {} chars", s.chars().count()),
             Msg::Hello { .. } => String::new(),
         };
         match msg {
@@ -223,6 +229,7 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
             Msg::Button { b, down } => inj.button(&b, down),
             Msg::Click { b } => inj.click(&b),
             Msg::Consumer { usage } => inj.consumer(usage),
+            Msg::Clip { s } => { set_clip(&s); note(st, |st| st.last_clip = s); }
             Msg::Hello { .. } => {}
         }
         if !desc.is_empty() {
@@ -230,7 +237,55 @@ fn handle(stream: TcpStream, token: &str, inj: &mut Injector, st: &Shared) {
         }
     }
     println!("— {peer} disconnected");
-    note(st, |s| { s.connected = None; s.last = "idle".into(); });
+    note(st, |s| { s.connected = None; s.last = "idle".into(); s.tx = None; });
+}
+
+// ----------------------------- clipboard (via xsel / Xwayland) -----------------------------
+fn set_clip(s: &str) {
+    use std::process::Stdio;
+    if let Ok(mut child) = Command::new("xsel").args(["-b", "-i"]).stdin(Stdio::piped()).spawn() {
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(s.as_bytes());
+        }
+        let _ = child.wait();
+    }
+}
+
+fn get_clip() -> String {
+    Command::new("xsel")
+        .args(["-b", "-o"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default()
+}
+
+/// Poll the desktop clipboard; when it changes while a phone is connected, push it down.
+fn clipboard_sync_loop(status: Shared) {
+    loop {
+        thread::sleep(std::time::Duration::from_millis(1200));
+        let connected = { status.lock().map(|s| s.connected.is_some()).unwrap_or(false) };
+        if !connected {
+            continue;
+        }
+        let cur = get_clip();
+        if cur.is_empty() {
+            continue;
+        }
+        let changed = { status.lock().map(|s| s.last_clip != cur).unwrap_or(false) };
+        if !changed {
+            continue;
+        }
+        let line = format!("{{\"t\":\"clip\",\"s\":\"{}\"}}\n", json_escape(&cur));
+        if let Ok(mut s) = status.lock() {
+            s.last_clip = cur.clone();
+            if let Some(tx) = s.tx.as_ref() {
+                let mut t: &TcpStream = tx;
+                let _ = t.write_all(line.as_bytes());
+                let _ = t.flush();
+            }
+        }
+    }
 }
 
 fn main() {
@@ -271,6 +326,8 @@ fn main() {
         connected: None,
         events: 0,
         last: "idle".into(),
+        tx: None,
+        last_clip: String::new(),
     }));
 
     // local web control panel
@@ -284,6 +341,12 @@ fn main() {
 
     // advertise on the LAN so the phone can auto-discover us (no IP typing). Keep alive.
     let _mdns = start_mdns(port);
+
+    // push desktop clipboard changes down to the connected phone
+    {
+        let st = status.clone();
+        thread::spawn(move || clipboard_sync_loop(st));
+    }
 
     println!("┌─────────────────────────────────────────");
     println!("│ Relay desktop receiver");
