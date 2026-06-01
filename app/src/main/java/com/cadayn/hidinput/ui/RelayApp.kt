@@ -145,7 +145,7 @@ private fun TopBar(c: RelayController, onSettings: () -> Unit, onConnClick: () -
         Box(
             Modifier.clip(RoundedCornerShape(5.dp)).background(colors.bgDeep)
                 .padding(horizontal = 6.dp, vertical = 2.dp),
-        ) { Text("v0.1", style = Relay.type.mono.copy(color = colors.textFaint, fontSize = 10.sp)) }
+        ) { Text("v1.0", style = Relay.type.mono.copy(color = colors.textFaint, fontSize = 10.sp)) }
 
         Spacer(Modifier.weight(1f))
 
@@ -159,11 +159,11 @@ private fun TopBar(c: RelayController, onSettings: () -> Unit, onConnClick: () -
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            val dot = if (c.isConnected) colors.accent else colors.textFaint
+            val dot = if (c.online) colors.accent else colors.textFaint
             Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(dot))
-            if (c.isConnected) {
-                Text(c.deviceName ?: "Host", style = Relay.type.body.copy(color = colors.text, fontSize = 12.5.sp))
-                Text("${c.latency}ms", style = Relay.type.mono.copy(color = colors.accent2, fontSize = 11.sp))
+            if (c.online) {
+                Text(c.activeName ?: "Host", style = Relay.type.body.copy(color = colors.text, fontSize = 12.5.sp), maxLines = 1)
+                Text(if (c.wifiConnected) "WiFi" else "${c.latency}ms", style = Relay.type.mono.copy(color = colors.accent2, fontSize = 11.sp))
             } else {
                 Text("Not connected", style = Relay.type.body.copy(color = colors.textFaint, fontSize = 12.5.sp))
             }

@@ -38,7 +38,7 @@ import com.cadayn.hidinput.ui.theme.Relay
 
 @Composable
 fun DashboardScreen(c: RelayController, onOpenKeyboard: () -> Unit, onConnect: () -> Unit) {
-    if (!c.isConnected) EmptyHub(onConnect) else ConnectedHub(c, onOpenKeyboard)
+    if (!c.online) EmptyHub(onConnect) else ConnectedHub(c, onOpenKeyboard)
 }
 
 @Composable
@@ -91,17 +91,18 @@ private fun HeroCard(c: RelayController, onOpenKeyboard: () -> Unit, modifier: M
             ) { RelayIcons.Bluetooth(size = 22.dp, color = col.accent) }
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    TText(c.deviceName ?: "Host", Relay.type.h1.copy(fontSize = 22.sp), col.text, maxLines = 1)
+                    TText(c.activeName ?: "Host", Relay.type.h1.copy(fontSize = 22.sp), col.text, maxLines = 1)
                     LiveBadge()
                 }
-                TText("Connected as keyboard + trackpad · HID", Relay.type.sub.copy(fontSize = 12.5.sp), col.textDim)
+                TText(if (c.wifiConnected) "Connected over WiFi · desktop" else "Connected as keyboard + trackpad · HID",
+                    Relay.type.sub.copy(fontSize = 12.5.sp), col.textDim)
             }
         }
         if (compact) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Stat("Latency", "${c.latency} ms", true, Modifier.weight(1f))
-                    Stat("Link", "BT 5.3", false, Modifier.weight(1f))
+                    Stat("Latency", if (c.wifiConnected) "LAN" else "${c.latency} ms", true, Modifier.weight(1f))
+                    Stat("Link", if (c.wifiConnected) "WiFi" else "BT 5.3", false, Modifier.weight(1f))
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Stat("Phone", "${c.batteryPct()}%", false, Modifier.weight(1f))
@@ -110,8 +111,8 @@ private fun HeroCard(c: RelayController, onOpenKeyboard: () -> Unit, modifier: M
             }
         } else {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Stat("Latency", "${c.latency} ms", true, Modifier.weight(1f))
-                Stat("Link", "BT 5.3", false, Modifier.weight(1f))
+                Stat("Latency", if (c.wifiConnected) "LAN" else "${c.latency} ms", true, Modifier.weight(1f))
+                Stat("Link", if (c.wifiConnected) "WiFi" else "BT 5.3", false, Modifier.weight(1f))
                 Stat("Phone", "${c.batteryPct()}%", false, Modifier.weight(1f))
                 Stat("Encryption", "AES", false, Modifier.weight(1f))
             }

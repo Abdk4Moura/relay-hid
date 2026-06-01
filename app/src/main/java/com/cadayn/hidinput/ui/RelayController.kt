@@ -84,6 +84,9 @@ class RelayController(private val context: Context) : HidPeripheralManager.Liste
     var latency by mutableStateOf(if (hid.isConnected) 8 else 0); private set
 
     val isConnected get() = conn == ConnState.CONNECTED
+    /** Connected over *either* transport (BT HID or WiFi desktop). */
+    val online: Boolean get() = isConnected || wifiConnected
+    val activeName: String? get() = if (wifiConnected) wifiHost else deviceName
 
     // ---- settings (persisted) ----
     var dark by mutableStateOf(prefs.getBoolean("dark", true)); private set
