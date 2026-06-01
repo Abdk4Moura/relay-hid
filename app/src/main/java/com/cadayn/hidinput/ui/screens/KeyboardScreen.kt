@@ -243,13 +243,10 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
                 lastShiftTap = now
             }
             "alt" -> alt = !alt
-            "gui" -> {
-                // Tap once to arm (for combos like Super+E); tap the armed key again to send the
-                // GUI key BY ITSELF → Start menu / Activities / Spotlight. No fiddly double-tap timing.
-                if (gui) {
-                    val guiBit = if (c.swapCmd) HidConstants.MOD_LCTRL else HidConstants.MOD_LGUI
-                    c.tapKey(guiBit, 0); c.logEvent("key", "${c.guiKey.first} (alone)"); gui = false
-                } else gui = true
+            "gui" -> gui = !gui   // tap to arm/disarm for combos; lone-press is the dedicated key below
+            "guiAlone" -> {       // dedicated single-tap → send the GUI/Super key BY ITSELF (Start/Activities)
+                val guiBit = if (c.swapCmd) HidConstants.MOD_LCTRL else HidConstants.MOD_LGUI
+                c.tapKey(guiBit, 0); c.logEvent("key", "${c.guiKey.first} (alone)")
             }
             "caps" -> if (c.capsEsc) emit("esc", 0, HidConstants.KEY_ESC, null) else caps = !caps
         }
@@ -701,7 +698,9 @@ private fun ModifierBar(
     Row(Modifier.fillMaxWidth().height(46.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
         BarChip(c.ctrlKey.first, ctrl, haptic, Modifier.weight(1f)) { onMod("ctrl") }
         BarChip(c.altKey.first, alt, haptic, Modifier.weight(1f)) { onMod("alt") }
-        BarChip(c.guiKey.first, gui, haptic, Modifier.weight(1f), onLong = { onMod("gui") }) { onMod("gui") }
+        BarChip(c.guiKey.first, gui, haptic, Modifier.weight(1f)) { onMod("gui") }
+        // tiny dedicated key: single tap sends the GUI/Super key BY ITSELF (Start menu / Activities)
+        LoneKey(c.guiKey.first, haptic) { onSpecial("guiAlone") }
         BarChip("⇧", shift, haptic, Modifier.weight(1f)) { onMod("shift") }
         BarChip("esc", false, haptic, Modifier.weight(1f)) { onSpecial("esc") }
         FullscreenToggle(immersive, onToggleImmersive)
@@ -713,6 +712,30 @@ private fun RowScope.BarChip(label: String, armed: Boolean, haptic: Boolean, mod
     val col = Relay.colors
     KeyShell(modifier.fillMaxHeight(), sculpted = false, action = false, armed = armed, flashed = false, haptic = haptic, repeat = repeat, onLong = onLong, onDown = onTap) {
         Text(label, maxLines = 1, style = Relay.type.mono.copy(color = if (armed) col.accent else col.textDim, fontSize = if (label.length > 2) 11.5.sp else 14.sp))
+    }
+}
+
+// Tiny dedicated key — a single tap sends the Super/GUI key BY ITSELF (no arming, no double-tap,
+// no long-press). Accent-filled so it reads as "fires now" vs the outlined arming chips beside it.
+@Composable
+private fun RowScope.LoneKey(glyph: String, haptic: Boolean, onTap: () -> Unit) {
+    val col = Relay.colors
+    val view = LocalView.current
+    var flash by remember { mutableStateOf(false) }
+    LaunchedEffect(flash) { if (flash) { kotlinx.coroutines.delay(110); flash = false } }
+    val short = if (glyph.length > 2) glyph.take(3) else glyph
+    Box(
+        Modifier.width(40.dp).fillMaxHeight()
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (flash) col.accent else col.accent.copy(alpha = 0.16f))
+            .border(1.dp, col.accent.copy(alpha = 0.55f), RoundedCornerShape(9.dp))
+            .pointerInput(Unit) { detectTapGestures(onTap = { if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); flash = true; onTap() }) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(short, maxLines = 1, style = Relay.type.mono.copy(
+            color = if (flash) col.bg else col.accent,
+            fontSize = if (short.length > 1) 9.5.sp else 14.sp,
+            fontWeight = FontWeight.Bold))
     }
 }
 
@@ -832,9 +855,9 @@ private fun KeyboardPane(
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(gap)) {
             ModKey(c.ctrlKey.first, c.ctrlKey.second, ctrl, 1f, sculpted, c.haptics) { onMod("ctrl") }
             ModKey(c.altKey.first, c.altKey.second, alt, 1f, sculpted, c.haptics) { onMod("alt") }
-            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics, onLong = { onMod("gui") }) { onMod("gui") }
+            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics) { onMod("gui") }
             SpaceKey(if (c.showArrowKeys) 5f else 8f, sculpted, c.haptics, c.sensitivity, c.accel, c.sideBias, onSpace = { onSpecial("space") }, onArrow = onSpecial)
-            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics, onLong = { onMod("gui") }) { onMod("gui") }
+            ModKey(c.guiKey.first, c.guiKey.second, gui, 1.3f, sculpted, c.haptics) { onMod("gui") }
             ModKey(c.altKey.first, c.altKey.second, alt, 1f, sculpted, c.haptics) { onMod("alt") }
             if (c.showArrowKeys) ArrowCluster(3f, sculpted, shift, caps, c.haptics, onKey)
         }
