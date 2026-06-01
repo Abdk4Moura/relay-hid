@@ -883,27 +883,36 @@ private fun RowScope.SlideKey(
                     if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     var dx = 0f; var dy = 0f
                     var current: String? = null
-                    var reps = 0; var nextAt = System.currentTimeMillis() + 350L; var interval = 110L
-                    while (true) {
+                    var reps = 0; var interval = 350L; var first = true
+                    // Wall-clock timeout wraps a release-wait, so a held key auto-repeats reliably
+                    // even while the digitiser streams stationary move events (robust to jitter).
+                    loop@ while (true) {
                         val canRepeat = repeat && current == null
-                        val wait = if (canRepeat) (nextAt - System.currentTimeMillis()).coerceAtLeast(1L) else 100000L
-                        val e = withTimeoutOrNull(wait) { awaitPointerEvent() }
-                        if (e == null) {   // held in centre → accelerating auto-repeat of the letter
-                            onCenterLatest(); reps++
-                            if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            nextAt = System.currentTimeMillis() + interval; interval = maxOf(28L, interval - 12L)
-                            continue
+                        val outcome = withTimeoutOrNull(if (canRepeat) interval else 600000L) {
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                val ch = e.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull "up"
+                                dx += ch.positionChange().x; dy += ch.positionChange().y
+                                ch.consume()
+                                val corner = cornerFor(dx, dy, k.ne, k.nw, k.se, k.sw)
+                                if (corner != current) {
+                                    current = corner; active = corner
+                                    if (corner != null && haptic) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    return@withTimeoutOrNull "recompute"   // corner state changed → re-evaluate repeat
+                                }
+                                if (!ch.pressed) return@withTimeoutOrNull "up"
+                            }
+                            @Suppress("UNREACHABLE_CODE") "up"
                         }
-                        val ch = e.changes.firstOrNull { it.id == down.id } ?: break
-                        dx += ch.positionChange().x; dy += ch.positionChange().y
-                        val up = !ch.pressed
-                        ch.consume()
-                        val corner = cornerFor(dx, dy, k.ne, k.nw, k.se, k.sw)
-                        if (corner != current) {
-                            current = corner; active = corner
-                            if (corner != null && haptic) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        when (outcome) {
+                            "up" -> break@loop
+                            "recompute" -> {}
+                            else -> {   // timed out while held in centre → repeat
+                                onCenterLatest(); reps++
+                                if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                interval = if (first) { first = false; 110L } else maxOf(28L, interval - 12L)
+                            }
                         }
-                        if (up) break
                     }
                     pressed = false; active = null
                     val s = when (current) { "NE" -> k.ne; "NW" -> k.nw; "SE" -> k.se; "SW" -> k.sw; else -> null }
@@ -958,27 +967,34 @@ private fun RowScope.ThumbCharKey(
                     if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     var dx = 0f; var dy = 0f
                     var current: String? = null
-                    var reps = 0; var nextAt = System.currentTimeMillis() + 350L; var interval = 110L
-                    while (true) {
+                    var reps = 0; var interval = 350L; var first = true
+                    loop@ while (true) {
                         val canRepeat = repeat && current == null
-                        val wait = if (canRepeat) (nextAt - System.currentTimeMillis()).coerceAtLeast(1L) else 100000L
-                        val e = withTimeoutOrNull(wait) { awaitPointerEvent() }
-                        if (e == null) {   // held in centre → accelerating auto-repeat of the character
-                            onCharLatest(tk.c); reps++
-                            if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            nextAt = System.currentTimeMillis() + interval; interval = maxOf(28L, interval - 12L)
-                            continue
+                        val outcome = withTimeoutOrNull(if (canRepeat) interval else 600000L) {
+                            while (true) {
+                                val e = awaitPointerEvent()
+                                val ch = e.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull "up"
+                                dx += ch.positionChange().x; dy += ch.positionChange().y
+                                ch.consume()
+                                val corner = cornerFor(dx, dy, tk.ne, tk.nw, tk.se, tk.sw)
+                                if (corner != current) {
+                                    current = corner; active = corner
+                                    if (corner != null && haptic) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    return@withTimeoutOrNull "recompute"
+                                }
+                                if (!ch.pressed) return@withTimeoutOrNull "up"
+                            }
+                            @Suppress("UNREACHABLE_CODE") "up"
                         }
-                        val ch = e.changes.firstOrNull { it.id == down.id } ?: break
-                        dx += ch.positionChange().x; dy += ch.positionChange().y
-                        val up = !ch.pressed
-                        ch.consume()
-                        val corner = cornerFor(dx, dy, tk.ne, tk.nw, tk.se, tk.sw)
-                        if (corner != current) {
-                            current = corner; active = corner
-                            if (corner != null && haptic) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        when (outcome) {
+                            "up" -> break@loop
+                            "recompute" -> {}
+                            else -> {
+                                onCharLatest(tk.c); reps++
+                                if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                interval = if (first) { first = false; 110L } else maxOf(28L, interval - 12L)
+                            }
                         }
-                        if (up) break
                     }
                     pressed = false; active = null
                     val s = when (current) { "NE" -> tk.ne; "NW" -> tk.nw; "SE" -> tk.se; "SW" -> tk.sw; else -> null }
