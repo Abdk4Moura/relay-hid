@@ -789,12 +789,19 @@ fn config_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(base).join("relay-desktop")
 }
 
+/// Token is a secret (anyone with it can inject input) — keep it readable only by the owner.
+fn lock_down(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
 /// Stable PIN persisted in the config dir so it survives restarts (generated once).
 fn load_or_create_token() -> String {
     let path = config_dir().join("token");
     if let Ok(s) = std::fs::read_to_string(&path) {
         let t = s.trim().to_string();
         if !t.is_empty() {
+            lock_down(&path); // tighten perms on pre-existing tokens too
             return t;
         }
     }
@@ -802,11 +809,7 @@ fn load_or_create_token() -> String {
     let token = format!("{:04}", n % 10000);
     let _ = std::fs::create_dir_all(config_dir());
     let _ = std::fs::write(&path, &token);
-    // Token is a secret (anyone with it can inject input) — keep it readable only by the owner.
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
+    lock_down(&path);
     token
 }
 

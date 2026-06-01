@@ -10,8 +10,19 @@ remote=$(curl -fsSL --max-time 8 "$BASE/VERSION" 2>/dev/null || true)
 local=$(cat "$DIR/VERSION" 2>/dev/null || true)
 if [ -n "$remote" ] && [ "$remote" != "$local" ]; then
   if curl -fsSL --max-time 90 "$BASE/relay-desktop-x86_64-linux" -o "$BIN.new" 2>/dev/null; then
-    chmod +x "$BIN.new" && mv "$BIN.new" "$BIN" && printf '%s' "$remote" > "$DIR/VERSION"
-    echo "Relay: updated to v$remote"
+    # Verify the downloaded binary against the published SHA256 before trusting it (defends
+    # against a tampered/partial download). If no checksum is published, fall back to size check.
+    want=$(curl -fsSL --max-time 8 "$BASE/relay-desktop-x86_64-linux.sha256" 2>/dev/null | awk '{print $1}')
+    got=$(sha256sum "$BIN.new" 2>/dev/null | awk '{print $1}')
+    if [ -n "$want" ] && [ "$want" != "$got" ]; then
+      echo "Relay: update checksum mismatch — keeping current build"
+      rm -f "$BIN.new"
+    elif [ -s "$BIN.new" ]; then
+      chmod +x "$BIN.new" && mv "$BIN.new" "$BIN" && printf '%s' "$remote" > "$DIR/VERSION"
+      echo "Relay: updated to v$remote"
+    else
+      rm -f "$BIN.new"
+    fi
   else
     rm -f "$BIN.new"
   fi
