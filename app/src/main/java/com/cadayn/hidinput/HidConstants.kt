@@ -59,6 +59,8 @@ object HidConstants {
     const val KEY_DELETE = 0x4C
     const val KEY_PAGE_UP = 0x4B
     const val KEY_PAGE_DOWN = 0x4E
+    // Function keys F1–F12 are contiguous (F1=0x3A … F12=0x45).
+    const val KEY_F1 = 0x3A
     const val KEY_F5 = 0x3E
     const val KEY_B = 0x05    // 'b' — blank slide in presentations
 

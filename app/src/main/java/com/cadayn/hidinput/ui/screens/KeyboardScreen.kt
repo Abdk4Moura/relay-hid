@@ -142,7 +142,8 @@ private fun sysRowFor(profile: String): List<Sys> {
     }
 }
 
-private enum class Layer { BASE, NUM, SYM }
+private enum class Layer { BASE, NUM, SYM, FN }
+private val F_KEYS = listOf("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12")
 private sealed class TK {
     data class Ch(val c: Char, val w: Float = 1f,
         val ne: String? = null, val nw: String? = null, val se: String? = null, val sw: String? = null) : TK()
@@ -167,7 +168,14 @@ private val THUMB_NUM = listOf(
     ch("1234567890"),
     listOf('-', '/', ':', ';', '(', ')', '$', '&', '@', '"').map { TK.Ch(it) },
     listOf(TK.Act("lSym", "#+=", 1.5f), TK.Ch('.'), TK.Ch(','), TK.Ch('?'), TK.Ch('!'), TK.Ch('\''), TK.Act("bksp", "⌫", 1.5f)),
-    listOf(TK.Act("lABC", "ABC", 1.6f), TK.Act("space", "space", 7f), TK.Act("enter", "⏎", 1.6f)),
+    listOf(TK.Act("lABC", "ABC", 1.5f), TK.Act("lFn", "Fn", 1.4f), TK.Act("space", "space", 5.4f), TK.Act("enter", "⏎", 1.5f)),
+)
+// Function-key layer (reached via the Fn key on the number layer). Armed modifiers still apply,
+// so e.g. arm Alt then tap F4 → Alt+F4.
+private val THUMB_FN = listOf(
+    listOf("F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10").map { TK.Act(it, it) },
+    listOf(TK.Act("F11", "F11"), TK.Act("F12", "F12"), TK.Act("esc", "esc"), TK.Act("Tab", "⇥"), TK.Act("bksp", "⌫")),
+    listOf(TK.Act("lABC", "ABC", 1.6f), TK.Act("l123", "123", 1.4f), TK.Act("space", "space", 5f), TK.Act("enter", "⏎", 1.6f)),
 )
 private val THUMB_SYM = listOf(
     listOf('[', ']', '{', '}', '#', '%', '^', '*', '+', '=').map { TK.Ch(it) },
@@ -186,6 +194,7 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
     var gui by remember { mutableStateOf(false) }
     var caps by remember { mutableStateOf(false) }
     var lastShiftTap by remember { mutableLongStateOf(0L) }
+    var lastGuiTap by remember { mutableLongStateOf(0L) }
     var lastCombo by remember { mutableStateOf("—") }
     var flashId by remember { mutableStateOf<String?>(null) }
     var flashTick by remember { mutableIntStateOf(0) }
@@ -228,7 +237,16 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
                 else shift = !shift
                 lastShiftTap = now
             }
-            "alt" -> alt = !alt; "gui" -> gui = !gui
+            "alt" -> alt = !alt
+            "gui" -> {
+                val now = System.currentTimeMillis()
+                if (now - lastGuiTap < 320L) {
+                    // double-tap → send the GUI key alone (Windows Start menu / Mac Spotlight-launcher)
+                    val guiBit = if (c.swapCmd) HidConstants.MOD_LCTRL else HidConstants.MOD_LGUI
+                    c.tapKey(guiBit, 0); c.logEvent("key", "${c.guiKey.first} (alone)"); gui = false
+                } else gui = !gui
+                lastGuiTap = now
+            }
             "caps" -> if (c.capsEsc) emit("esc", 0, HidConstants.KEY_ESC, null) else caps = !caps
         }
     }
@@ -258,6 +276,9 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
             "Left" -> { emit("←", 0, HidConstants.KEY_LEFT, null, keepShift = true); if (!command) moveCaret(-1) }
             "Right" -> { emit("→", 0, HidConstants.KEY_RIGHT, null, keepShift = true); if (!command) moveCaret(1) }
             "l123" -> layer = Layer.NUM; "lSym" -> layer = Layer.SYM; "lABC" -> layer = Layer.BASE
+            "lFn" -> layer = Layer.FN
+            "Tab" -> emit("⇥", 0, HidConstants.KEY_TAB, null)
+            in F_KEYS -> emit(id, 0, HidConstants.KEY_F1 + (F_KEYS.indexOf(id)), null)  // armed mods apply (e.g. Alt+F4)
         }
     }
 
@@ -283,7 +304,7 @@ private fun PortraitThumb(
 ) {
     val col = Relay.colors
     val view = LocalView.current
-    val rows = when (layer) { Layer.NUM -> THUMB_NUM; Layer.SYM -> THUMB_SYM; Layer.BASE -> THUMB_BASE }
+    val rows = when (layer) { Layer.NUM -> THUMB_NUM; Layer.SYM -> THUMB_SYM; Layer.FN -> THUMB_FN; Layer.BASE -> THUMB_BASE }
     val pl = c.portraitLayout
     val oneHand = pl == "onehanded"
     var padFull by remember { mutableStateOf(false) }
