@@ -8,15 +8,28 @@ under both **X11 and Wayland** (unlike X11-only injectors).
 > Bluetooth HID mode for those. WiFi unlocks things BT can't: clipboard sync,
 > file drop, longer range, no pairing (those land in later phases).
 
-## Build
+## Prebuilt binary (no Rust needed)
+
+A **fully static x86_64 binary** (built with musl, runs on any Linux regardless of
+glibc) is attached to the GitHub release:
+
+```sh
+curl -L -o relay-desktop https://github.com/Abdk4Moura/relay-hid/releases/latest/download/relay-desktop-x86_64-linux
+chmod +x relay-desktop
+```
+
+## Build from source
 
 ```sh
 cd desktop
 cargo build --release
+# or a portable static binary:
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-Build deps: a Rust toolchain (`rustup`) and the kernel headers are not required —
-`evdev` talks to `/dev/uinput` directly. (Built/tested against `evdev = 0.12`.)
+Build deps: a Rust toolchain (`rustup`) — no kernel headers needed, `evdev` talks to
+`/dev/uinput` directly. (Built against `evdev = 0.12`, Rust 1.96.)
 
 ## Grant uinput access (one-time, avoids running as root)
 

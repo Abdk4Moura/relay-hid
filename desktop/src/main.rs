@@ -18,7 +18,7 @@
 //! Run:    ./target/release/relay-desktop --token 1234 --port 47600
 //! uinput needs access to /dev/uinput — see README (udev rule, or run with sudo).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::time::{SystemTime, UNIX_EPOCH};
 
