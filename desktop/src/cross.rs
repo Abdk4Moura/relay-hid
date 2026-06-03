@@ -12,15 +12,22 @@ use enigo::{
     Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings,
 };
 
+/// macOS's `Enigo` holds a `CGEventSource` (a raw pointer) that Rust marks `!Send`, which would
+/// stop us sharing the injector across the per-connection threads via `Arc<Mutex<…>>`. All access
+/// is serialized behind that mutex and `CGEventPost` is documented as usable from any thread, so a
+/// `Send` wrapper is sound here. (On Windows `Enigo` is already `Send`; the wrapper is a no-op.)
+struct SendEnigo(Enigo);
+unsafe impl Send for SendEnigo {}
+
 /// Replays phone input on this machine via the OS's synthetic-input API.
 pub struct Injector {
-    e: Enigo,
+    e: SendEnigo,
 }
 
 impl Injector {
     pub fn new() -> std::io::Result<Self> {
         Enigo::new(&Settings::default())
-            .map(|e| Injector { e })
+            .map(|e| Injector { e: SendEnigo(e) })
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, format!("{err:?}")))
     }
 
@@ -28,56 +35,56 @@ impl Injector {
     pub fn tap_hid(&mut self, code: u16, mods: u8) {
         let held = hid_mods(mods);
         for m in &held {
-            let _ = self.e.key(*m, Direction::Press);
+            let _ = self.e.0.key(*m, Direction::Press);
         }
         if code != 0 {
             if let Some(k) = hid_to_key(code) {
-                let _ = self.e.key(k, Direction::Click);
+                let _ = self.e.0.key(k, Direction::Click);
             }
         }
         for m in held.iter().rev() {
-            let _ = self.e.key(*m, Direction::Release);
+            let _ = self.e.0.key(*m, Direction::Release);
         }
     }
 
     pub fn text(&mut self, s: &str) {
-        let _ = self.e.text(s);
+        let _ = self.e.0.text(s);
     }
 
     pub fn move_rel(&mut self, dx: i32, dy: i32) {
-        let _ = self.e.move_mouse(dx, dy, Coordinate::Rel);
+        let _ = self.e.0.move_mouse(dx, dy, Coordinate::Rel);
     }
 
     /// `x`/`y` are normalized 0..32767; scale into the primary display's pixels.
     pub fn move_abs(&mut self, x: i32, y: i32) {
-        if let Ok((w, h)) = self.e.main_display() {
+        if let Ok((w, h)) = self.e.0.main_display() {
             let px = (x as i64 * (w as i64 - 1) / 32767) as i32;
             let py = (y as i64 * (h as i64 - 1) / 32767) as i32;
-            let _ = self.e.move_mouse(px, py, Coordinate::Abs);
+            let _ = self.e.0.move_mouse(px, py, Coordinate::Abs);
         }
     }
 
     pub fn scroll(&mut self, dy: i32) {
         // HID wheel is +up; enigo's vertical scroll is +down → negate so directions agree.
-        let _ = self.e.scroll(-dy, Axis::Vertical);
+        let _ = self.e.0.scroll(-dy, Axis::Vertical);
     }
 
     pub fn hscroll(&mut self, dx: i32) {
-        let _ = self.e.scroll(dx, Axis::Horizontal);
+        let _ = self.e.0.scroll(dx, Axis::Horizontal);
     }
 
     pub fn button(&mut self, b: &str, down: bool) {
         let btn = btn(b);
-        let _ = self.e.button(btn, if down { Direction::Press } else { Direction::Release });
+        let _ = self.e.0.button(btn, if down { Direction::Press } else { Direction::Release });
     }
 
     pub fn click(&mut self, b: &str) {
-        let _ = self.e.button(btn(b), Direction::Click);
+        let _ = self.e.0.button(btn(b), Direction::Click);
     }
 
     pub fn consumer(&mut self, usage: u16) {
         if let Some(k) = consumer_to_key(usage) {
-            let _ = self.e.key(k, Direction::Click);
+            let _ = self.e.0.key(k, Direction::Click);
         }
     }
 }
