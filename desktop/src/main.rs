@@ -30,10 +30,19 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(target_os = "linux")]
 use evdev::{
     uinput::VirtualDeviceBuilder, AbsInfo, AbsoluteAxisType, AttributeSet, EventType, InputEvent,
     Key, RelativeAxisType, UinputAbsSetup,
 };
+
+// Windows/macOS backend (input/clipboard/notify) — provides Injector, set_clip, get_clip,
+// notify_desktop, start_tray with the same signatures the shared code below calls.
+#[cfg(not(target_os = "linux"))]
+mod cross;
+#[cfg(not(target_os = "linux"))]
+use cross::{get_clip, notify_desktop, set_clip, start_tray, Injector};
+
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use qrcode::{render::svg, QrCode};
 use serde::Deserialize;
@@ -69,7 +78,9 @@ struct Incoming {
     path: std::path::PathBuf,
 }
 
+#[cfg(target_os = "linux")]
 const SYN: i32 = 0; // SYN_REPORT
+#[cfg(target_os = "linux")]
 const ABS_MAX: i32 = 32767; // absolute-axis full-scale; agent normalizes pixels into this range
 /// Drop a connection if no data (incl. heartbeat ping) arrives within this window.
 /// Must exceed the phone's heartbeat interval (~4s) with margin.
@@ -92,6 +103,7 @@ type SharedInj = Arc<Mutex<Injector>>;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg(target_os = "linux")]
 struct Injector {
     dev: evdev::uinput::VirtualDevice,
     /// Separate absolute-pointer device for `moveto` (computer-use agent). Optional: if the
@@ -99,6 +111,7 @@ struct Injector {
     abs_dev: Option<evdev::uinput::VirtualDevice>,
 }
 
+#[cfg(target_os = "linux")]
 impl Injector {
     fn new() -> std::io::Result<Self> {
         let mut keys = AttributeSet::<Key>::new();
@@ -236,6 +249,7 @@ impl Injector {
 /// libinput classifies it as a pointer (not a touchscreen needing calibration); a single system
 /// cursor is shared with the relative device, so existing click/button events land at the
 /// position set here.
+#[cfg(target_os = "linux")]
 fn build_abs_device() -> std::io::Result<Option<evdev::uinput::VirtualDevice>> {
     let mut btns = AttributeSet::<Key>::new();
     btns.insert(Key::BTN_LEFT);
@@ -430,6 +444,7 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
 // ----------------------------- clipboard -----------------------------
 // Prefer the native WAYLAND clipboard (what COSMIC/GNOME apps actually use); fall back to
 // xsel (X11/Xwayland) only if the Wayland data-control protocol isn't available.
+#[cfg(target_os = "linux")]
 fn set_clip(s: &str) {
     use wl_clipboard_rs::copy::{MimeType, Options, Source};
     if Options::new()
@@ -449,7 +464,9 @@ fn set_clip(s: &str) {
 
 // ----------------------------- file drop -----------------------------
 fn download_dir() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))   // Windows
+        .unwrap_or_else(|_| ".".into());
     std::path::PathBuf::from(home).join("Downloads")
 }
 
@@ -513,6 +530,7 @@ fn push_file_to_phone(name: &str, data: &[u8], st: &Shared) -> Result<(), String
 
 /// Pop a native desktop notification via org.freedesktop.Notifications (works on COSMIC/GNOME/KDE
 /// with no external dependency); fall back to notify-send if the bus call fails.
+#[cfg(target_os = "linux")]
 fn notify_desktop(summary: &str, body: &str) {
     let sent = (|| -> zbus::Result<()> {
         let conn = zbus::blocking::Connection::session()?;
@@ -597,6 +615,7 @@ fn save_file(name: &str, b64: &str, st: &Shared) -> Result<(String, usize), Stri
     Ok((fname, bytes.len()))
 }
 
+#[cfg(target_os = "linux")]
 fn get_clip() -> String {
     use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType, Seat};
     match get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
@@ -660,6 +679,13 @@ fn main() {
         }
         return;
     }
+    // `relay-desktop autostart on|off` → manage "start on login".
+    if argv.get(1).map(|s| s.as_str()) == Some("autostart") {
+        let on = argv.get(2).map(|s| s.as_str()) != Some("off");
+        let ok = set_autostart(on);
+        println!("autostart {}: {}", if on { "enabled" } else { "disabled" }, if ok { "ok" } else { "failed" });
+        std::process::exit(if ok { 0 } else { 1 });
+    }
     // `relay-desktop send <file>...` → push file(s) to the connected phone via the running receiver.
     if argv.get(1).map(|s| s.as_str()) == Some("send") {
         let files = &argv[2..];
@@ -701,7 +727,12 @@ fn main() {
     let inj: SharedInj = match Injector::new() {
         Ok(i) => Arc::new(Mutex::new(i)),
         Err(e) => {
+            #[cfg(target_os = "linux")]
             eprintln!("Failed to open /dev/uinput: {e}\nGrant access (see README) or run with sudo.");
+            #[cfg(target_os = "macos")]
+            eprintln!("Failed to start input injection: {e}\nGrant Relay 'Accessibility' permission in System Settings → Privacy & Security.");
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            eprintln!("Failed to start input injection: {e}");
             std::process::exit(1);
         }
     };
@@ -733,7 +764,7 @@ fn main() {
         thread::spawn(move || serve_ui(ui_port, st));
     }
     let ui_url = format!("http://127.0.0.1:{ui_port}");
-    let _ = Command::new("xdg-open").arg(&ui_url).spawn();
+    open_url(&ui_url);
 
     // advertise on the LAN so the phone can auto-discover us (no IP typing). Keep alive.
     let _mdns = start_mdns(port);
@@ -744,8 +775,11 @@ fn main() {
         thread::spawn(move || clipboard_sync_loop(st));
     }
 
-    // system-tray icon (click → menu: open panel / send file / quit)
+    // system-tray icon (Linux); on Windows/macOS the web panel is the UI.
     start_tray(ui_port, Arc::clone(&status));
+
+    // make the receiver available on every login without a terminal (first run only).
+    autostart_on_first_run();
 
     println!("┌─────────────────────────────────────────");
     println!("│ Relay desktop receiver");
@@ -774,11 +808,13 @@ fn main() {
 }
 
 // ----------------------------- system tray (StatusNotifierItem via zbus) -----------------------------
+#[cfg(target_os = "linux")]
 struct Sni {
     url: String,
     status: Arc<Mutex<String>>,   // "Active" normally; flips to "NeedsAttention" on clipboard rx
 }
 
+#[cfg(target_os = "linux")]
 #[zbus::interface(name = "org.kde.StatusNotifierItem")]
 impl Sni {
     #[zbus(property)]
@@ -811,12 +847,14 @@ impl Sni {
 
 // com.canonical.dbusmenu — COSMIC's status-area applet is menu-driven: on click it pops
 // this menu rather than calling Activate. Without it the tray icon does nothing.
+#[cfg(target_os = "linux")]
 struct DbusMenu {
     url: String,
     st: Shared,
 }
 
 /// Tray "Send file to phone…" → native picker (zenity/kdialog) on a worker thread, then push.
+#[cfg(target_os = "linux")]
 fn pick_file_and_send(st: Shared) {
     thread::spawn(move || {
         let out = Command::new("zenity")
@@ -840,9 +878,12 @@ fn pick_file_and_send(st: Shared) {
     });
 }
 
+#[cfg(target_os = "linux")]
 type MenuProps = std::collections::HashMap<String, zbus::zvariant::OwnedValue>;
+#[cfg(target_os = "linux")]
 type MenuNode = (i32, MenuProps, Vec<zbus::zvariant::OwnedValue>);
 
+#[cfg(target_os = "linux")]
 fn ov<T>(v: T) -> zbus::zvariant::OwnedValue
 where
     T: Into<zbus::zvariant::Value<'static>>,
@@ -850,6 +891,7 @@ where
     zbus::zvariant::Value::from(v.into()).try_to_owned().unwrap()
 }
 
+#[cfg(target_os = "linux")]
 fn leaf_props(label: &str) -> MenuProps {
     let mut m = MenuProps::new();
     m.insert("label".into(), ov(label.to_string()));
@@ -858,11 +900,13 @@ fn leaf_props(label: &str) -> MenuProps {
     m
 }
 
+#[cfg(target_os = "linux")]
 fn leaf_node(id: i32, label: &str) -> zbus::zvariant::OwnedValue {
     let node: MenuNode = (id, leaf_props(label), Vec::new());
     zbus::zvariant::Value::from(node).try_to_owned().unwrap()
 }
 
+#[cfg(target_os = "linux")]
 #[zbus::interface(name = "com.canonical.dbusmenu")]
 impl DbusMenu {
     #[zbus(property)]
@@ -931,6 +975,7 @@ impl DbusMenu {
     fn about_to_show(&self, _id: i32) -> bool { false }
 }
 
+#[cfg(target_os = "linux")]
 fn start_tray(ui_port: u16, st: Shared) {
     let tray_status = Arc::new(Mutex::new(String::from("Active")));
     // channel so the input loop can ask the tray to flash on clipboard receipt
@@ -985,6 +1030,54 @@ fn start_tray(ui_port: u16, st: Shared) {
     });
 }
 
+/// Open a URL in the user's default browser, per-OS.
+fn open_url(url: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("xdg-open").arg(url).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg(url).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    }
+}
+
+/// Register/unregister "start on login" (registry Run key on Windows, LaunchAgent on macOS,
+/// autostart .desktop on Linux) via the cross-platform auto-launch crate. Best-effort.
+fn set_autostart(enable: bool) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let Some(path) = exe.to_str() else { return false };
+    let built = auto_launch::AutoLaunchBuilder::new()
+        .set_app_name("Relay")
+        .set_app_path(path)
+        .build();
+    match built {
+        Ok(al) => {
+            let r = if enable { al.enable() } else { al.disable() };
+            r.is_ok()
+        }
+        Err(_) => false,
+    }
+}
+
+/// On first run, add ourselves to login items so the receiver is always available without a
+/// terminal. Tracked by a marker so we never re-enable after the user turns it off.
+fn autostart_on_first_run() {
+    let marker = config_dir().join("autostart-done");
+    if marker.exists() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(config_dir());
+    let _ = std::fs::write(&marker, "1");
+    if set_autostart(true) {
+        println!("│ Added Relay to login items (disable: relay-desktop autostart off)");
+    }
+}
+
 fn hostname() -> String {
     Command::new("hostname")
         .output()
@@ -1012,6 +1105,12 @@ fn start_mdns(port: u16) -> Option<ServiceDaemon> {
 }
 
 fn config_dir() -> std::path::PathBuf {
+    // Windows: %APPDATA%\relay-desktop ; macOS/Linux: $XDG_CONFIG_HOME or ~/.config/relay-desktop
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        if !appdata.is_empty() {
+            return std::path::PathBuf::from(appdata).join("relay-desktop");
+        }
+    }
     let base = std::env::var("XDG_CONFIG_HOME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -1020,10 +1119,15 @@ fn config_dir() -> std::path::PathBuf {
 }
 
 /// Token is a secret (anyone with it can inject input) — keep it readable only by the owner.
+#[cfg(unix)]
 fn lock_down(path: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
 }
+
+/// On Windows the per-user profile already restricts the config dir; nothing extra to do.
+#[cfg(not(unix))]
+fn lock_down(_path: &std::path::Path) {}
 
 /// Stable PIN persisted in the config dir so it survives restarts (generated once).
 fn load_or_create_token() -> String {
@@ -1130,6 +1234,7 @@ fn serve_ui(port: u16, status: Shared) {
 
 // ----------------------------- mappings -----------------------------
 
+#[cfg(target_os = "linux")]
 fn mods_to_keys(mods: u8) -> Vec<Key> {
     let mut v = Vec::new();
     if mods & 0x01 != 0 {
@@ -1147,22 +1252,26 @@ fn mods_to_keys(mods: u8) -> Vec<Key> {
     v
 }
 
+#[cfg(target_os = "linux")]
 const LETTERS: [Key; 26] = [
     Key::KEY_A, Key::KEY_B, Key::KEY_C, Key::KEY_D, Key::KEY_E, Key::KEY_F, Key::KEY_G,
     Key::KEY_H, Key::KEY_I, Key::KEY_J, Key::KEY_K, Key::KEY_L, Key::KEY_M, Key::KEY_N,
     Key::KEY_O, Key::KEY_P, Key::KEY_Q, Key::KEY_R, Key::KEY_S, Key::KEY_T, Key::KEY_U,
     Key::KEY_V, Key::KEY_W, Key::KEY_X, Key::KEY_Y, Key::KEY_Z,
 ];
+#[cfg(target_os = "linux")]
 const DIGITS: [Key; 10] = [
     Key::KEY_1, Key::KEY_2, Key::KEY_3, Key::KEY_4, Key::KEY_5, Key::KEY_6, Key::KEY_7,
     Key::KEY_8, Key::KEY_9, Key::KEY_0,
 ];
+#[cfg(target_os = "linux")]
 const FKEYS: [Key; 12] = [
     Key::KEY_F1, Key::KEY_F2, Key::KEY_F3, Key::KEY_F4, Key::KEY_F5, Key::KEY_F6, Key::KEY_F7,
     Key::KEY_F8, Key::KEY_F9, Key::KEY_F10, Key::KEY_F11, Key::KEY_F12,
 ];
 
 /// USB HID Usage (Keyboard/Keypad page 0x07) → Linux evdev key.
+#[cfg(target_os = "linux")]
 fn hid_to_key(code: u16) -> Option<Key> {
     Some(match code {
         0x04..=0x1d => LETTERS[(code - 0x04) as usize],
@@ -1198,6 +1307,7 @@ fn hid_to_key(code: u16) -> Option<Key> {
 }
 
 /// Consumer page (0x0C) usage → evdev media/brightness key.
+#[cfg(target_os = "linux")]
 fn consumer_to_key(usage: u16) -> Option<Key> {
     Some(match usage {
         0x00cd => Key::KEY_PLAYPAUSE,
@@ -1215,6 +1325,7 @@ fn consumer_to_key(usage: u16) -> Option<Key> {
 }
 
 /// US-layout char → (key, needs-shift) for typing arbitrary text.
+#[cfg(target_os = "linux")]
 fn char_to_key(c: char) -> Option<(Key, bool)> {
     if c.is_ascii_lowercase() {
         return Some((LETTERS[(c as u8 - b'a') as usize], false));
@@ -1357,6 +1468,7 @@ const INDEX_HTML: &str = r##"<!doctype html>
 </script></body></html>"##;
 
 /// Every key the virtual device must declare it can emit.
+#[cfg(target_os = "linux")]
 fn all_keys() -> Vec<Key> {
     let mut v = Vec::new();
     v.extend_from_slice(&LETTERS);

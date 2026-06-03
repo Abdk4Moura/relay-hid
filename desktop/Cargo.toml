@@ -2,18 +2,31 @@
 name = "relay-desktop"
 version = "0.9.2"
 edition = "2021"
-description = "Relay WiFi receiver — injects keyboard/mouse input from the Relay phone app via Linux uinput, with a local web control panel, mDNS discovery and QR pairing"
+description = "Relay receiver — turns this computer into a wireless keyboard/mouse/clipboard/file target for the Relay phone app, with a local web control panel, mDNS discovery and QR pairing. Runs on Linux, Windows and macOS."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-evdev = "0.12"
 tiny_http = "0.12"
 mdns-sd = "0.11"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 base64 = "0.22"
+auto-launch = "0.5"               # cross-platform "start on login"
+
+# Linux: inject via the kernel's uinput, read the clipboard over Wayland, draw the
+# tray + notifications over D-Bus. This is the original, battle-tested backend.
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.12"
 zbus = "4"
 wl-clipboard-rs = "0.8"
+
+# Windows + macOS: portable input/clipboard/notify backends. No native tray for v1 —
+# the web control panel (http://127.0.0.1:47601) is the UI, and its drop zone handles
+# desktop→phone file sends everywhere.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+enigo = "0.2"
+arboard = "3"
+notify-rust = "4"
 
 [profile.release]
 strip = true

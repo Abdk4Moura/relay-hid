@@ -1,0 +1,13 @@
+/root/android-hid-input/desktop/target/x86_64-pc-windows-gnu/debug/deps/notify_rust-7e349258bcd9ea03.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/error.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/hints.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/hints/constants.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/miniver.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/notification.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/timeout.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/urgency.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/windows.rs
+
+/root/android-hid-input/desktop/target/x86_64-pc-windows-gnu/debug/deps/libnotify_rust-7e349258bcd9ea03.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/error.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/hints.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/hints/constants.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/miniver.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/notification.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/timeout.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/urgency.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/windows.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/error.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/hints.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/hints/constants.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/miniver.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/notification.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/timeout.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/urgency.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-rust-4.17.0/src/windows.rs:
