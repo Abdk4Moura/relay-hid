@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -377,11 +378,16 @@ private fun PortraitThumb(
             },
             onSettle = { overshoot = 0f; c.updateKeyHeight(kh.roundToInt()) },
         )
-        if (c.showReadout) {
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                Text("SENDING ", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.sp))
-                Text(lastCombo, style = Relay.type.monoSemi.copy(color = col.accent2, fontSize = 12.sp))
-                Text("  →  ${c.deviceName ?: "no device"}", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.sp))
+        // Thin strip below the trackpad handle: tiny dedicated Super/GUI key on the left (single tap
+        // sends the modifier BY ITSELF → Start menu / COSMIC launcher / Activities), live readout centered.
+        Box(Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 4.dp, vertical = 2.dp)) {
+            LoneKey(c.guiKey.first, c.haptics, Modifier.align(Alignment.CenterStart)) { onMod("guiAlone") }
+            if (c.showReadout) {
+                Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
+                    Text("SENDING ", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.sp))
+                    Text(lastCombo, style = Relay.type.monoSemi.copy(color = col.accent2, fontSize = 12.sp))
+                    Text("  →  ${c.deviceName ?: "no device"}", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.sp))
+                }
             }
         }
         ModifierBar(c, ctrl, shift, alt, gui, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
@@ -699,8 +705,6 @@ private fun ModifierBar(
         BarChip(c.ctrlKey.first, ctrl, haptic, Modifier.weight(1f)) { onMod("ctrl") }
         BarChip(c.altKey.first, alt, haptic, Modifier.weight(1f)) { onMod("alt") }
         BarChip(c.guiKey.first, gui, haptic, Modifier.weight(1f)) { onMod("gui") }
-        // tiny dedicated key: single tap sends the GUI/Super key BY ITSELF (Start menu / Activities)
-        LoneKey(c.guiKey.first, haptic) { onSpecial("guiAlone") }
         BarChip("⇧", shift, haptic, Modifier.weight(1f)) { onMod("shift") }
         BarChip("esc", false, haptic, Modifier.weight(1f)) { onSpecial("esc") }
         FullscreenToggle(immersive, onToggleImmersive)
@@ -716,25 +720,27 @@ private fun RowScope.BarChip(label: String, armed: Boolean, haptic: Boolean, mod
 }
 
 // Tiny dedicated key — a single tap sends the Super/GUI key BY ITSELF (no arming, no double-tap,
-// no long-press). Accent-filled so it reads as "fires now" vs the outlined arming chips beside it.
+// no long-press). Accent-filled so it reads as "fires now" vs the outlined arming chips. Lives in
+// the dead strip just below the trackpad handle.
 @Composable
-private fun RowScope.LoneKey(glyph: String, haptic: Boolean, onTap: () -> Unit) {
+private fun LoneKey(glyph: String, haptic: Boolean, modifier: Modifier = Modifier, onTap: () -> Unit) {
     val col = Relay.colors
     val view = LocalView.current
     var flash by remember { mutableStateOf(false) }
-    LaunchedEffect(flash) { if (flash) { kotlinx.coroutines.delay(110); flash = false } }
-    val short = if (glyph.length > 2) glyph.take(3) else glyph
+    LaunchedEffect(flash) { if (flash) { kotlinx.coroutines.delay(120); flash = false } }
+    val word = glyph.length > 1
     Box(
-        Modifier.width(40.dp).fillMaxHeight()
-            .clip(RoundedCornerShape(9.dp))
-            .background(if (flash) col.accent else col.accent.copy(alpha = 0.16f))
-            .border(1.dp, col.accent.copy(alpha = 0.55f), RoundedCornerShape(9.dp))
-            .pointerInput(Unit) { detectTapGestures(onTap = { if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); flash = true; onTap() }) },
+        modifier.height(26.dp).widthIn(min = if (word) 52.dp else 34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (flash) col.accent else col.accent.copy(alpha = 0.15f))
+            .border(1.dp, col.accent.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+            .pointerInput(Unit) { detectTapGestures(onTap = { if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); flash = true; onTap() }) }
+            .padding(horizontal = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(short, maxLines = 1, style = Relay.type.mono.copy(
+        Text(glyph, maxLines = 1, style = Relay.type.mono.copy(
             color = if (flash) col.bg else col.accent,
-            fontSize = if (short.length > 1) 9.5.sp else 14.sp,
+            fontSize = if (word) 10.sp else 14.sp,
             fontWeight = FontWeight.Bold))
     }
 }
