@@ -38,6 +38,7 @@ jobs:
         if: ${{ inputs.os == 'macos' }}
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          DRIVER_SSH_PUBKEY: ${{ secrets.DRIVER_SSH_PUBKEY }}
           MINUTES: ${{ inputs.minutes }}
         run: |
           set -e
@@ -61,6 +62,13 @@ jobs:
           caffeinate -dimsu -t $(( MINUTES * 60 + 120 )) >/dev/null 2>&1 &
           # nudge the display awake right now
           caffeinate -u -t 2 >/dev/null 2>&1 || true
+          # enable plain SSH over the tailnet for the driver (pubkey from a repo secret)
+          if [ -n "$DRIVER_SSH_PUBKEY" ]; then
+            sudo systemsetup -setremotelogin on || true
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            printf '%s\n' "$DRIVER_SSH_PUBKEY" >> ~/.ssh/authorized_keys
+            chmod 600 ~/.ssh/authorized_keys
+          fi
           ./desktop/target/release/relay-desktop --token 4321 --port 47600 &
           echo "::notice title=LIVE TEST READY (macOS)::VNC $TSIP  pw $VNCPW  |  phone → $TSIP:47600 PIN 4321"
           echo "==================================================================="
