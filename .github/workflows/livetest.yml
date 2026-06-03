@@ -41,9 +41,16 @@ jobs:
           MINUTES: ${{ inputs.minutes }}
         run: |
           set -e
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey="$TS_AUTHKEY" --hostname=relay-ci-mac --accept-routes
-          TSIP=$(tailscale ip -4 | head -1)
+          # install.sh just opens the App Store on macOS — use Homebrew for the real CLI + daemon,
+          # and run tailscaled in TUN mode so the host gets a real 100.x interface (userspace mode
+          # would not expose :5900 / :47600 to the tailnet).
+          brew install tailscale
+          TS=/opt/homebrew/bin/tailscale
+          sudo /opt/homebrew/bin/tailscaled > /tmp/tailscaled.log 2>&1 &
+          sleep 4
+          sudo "$TS" up --authkey="$TS_AUTHKEY" --hostname=relay-ci-mac --accept-routes
+          sleep 2
+          TSIP=$("$TS" ip -4 | head -1)
           VNCPW=$(openssl rand -hex 4)   # legacy VNC password is max 8 chars
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -privs -all \
