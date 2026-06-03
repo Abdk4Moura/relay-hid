@@ -755,7 +755,7 @@ private fun LoneSwitch(on: Boolean, haptic: Boolean, modifier: Modifier = Modifi
     ) {
         // little LED that lights when armed
         Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (on) col.accent else col.textFaint))
-        Text("LONE", maxLines = 1, style = Relay.type.mono.copy(
+        Text("SOLO", maxLines = 1, style = Relay.type.mono.copy(
             color = if (on) col.accent else col.textDim, fontSize = 10.sp, fontWeight = FontWeight.Bold))
     }
 }
