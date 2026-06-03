@@ -247,7 +247,8 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
     fun tapMod(which: String) {
         if (loneMode && which in setOf("ctrl", "alt", "gui", "shift")) {
             val (bit, label) = loneBit(which)
-            c.tapKey(bit, 0); c.logEvent("key", "$label (alone)")
+            c.tapKey(bit, 0); lastCombo = label   // surface it in the SENDING readout
+            c.logEvent("key", "$label (alone)")
             return
         }
         when (which) {
