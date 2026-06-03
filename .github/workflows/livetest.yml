@@ -1,0 +1,94 @@
+name: livetest
+
+# Manually-triggered "drive a real Windows/macOS machine from your phone" session.
+# Spins up a hosted runner, joins it to your tailnet, enables remote viewing (RDP on
+# Windows, Screen Sharing/VNC on macOS), starts the Relay receiver, then holds the job
+# open for a few minutes so your phone can connect over Tailscale and you can watch +
+# type live from pop-os (Remmina).
+#
+# Needs repo secret TS_AUTHKEY (a reusable + ephemeral Tailscale auth key).
+# Note: occasional interactive QA of your own build only — keep sessions short.
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Which OS to drive
+        type: choice
+        options: [macos, windows]
+        default: macos
+      minutes:
+        description: How long to hold the session open
+        default: '12'
+
+jobs:
+  live:
+    runs-on: ${{ inputs.os == 'macos' && 'macos-latest' || 'windows-latest' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build receiver
+        working-directory: desktop
+        run: cargo build --release
+
+      # ---------------------------------- macOS ----------------------------------
+      - name: macOS — tailnet + Screen Sharing + receiver
+        if: ${{ inputs.os == 'macos' }}
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          set -e
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey="$TS_AUTHKEY" --hostname=relay-ci-mac --accept-routes
+          TSIP=$(tailscale ip -4 | head -1)
+          VNCPW=$(openssl rand -hex 4)   # legacy VNC password is max 8 chars
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -restart -agent -privs -all \
+            -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$VNCPW" || true
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          ./desktop/target/release/relay-desktop --token 4321 --port 47600 &
+          echo "::notice title=LIVE TEST READY (macOS)::VNC $TSIP  pw $VNCPW  |  phone → $TSIP:47600 PIN 4321"
+          echo "==================================================================="
+          echo "  WATCH:  Remmina → VNC → $TSIP   (password: $VNCPW)"
+          echo "  DRIVE:  phone Relay → WiFi → connect to  $TSIP : 47600   PIN 4321"
+          echo "  NOTE :  first keystroke pops an Accessibility prompt — click Allow"
+          echo "          in the VNC window, then it'll type for real."
+          echo "  Holding for $MINUTES min…"
+          echo "==================================================================="
+          sleep $(( MINUTES * 60 ))
+
+      # --------------------------------- Windows ---------------------------------
+      - name: Windows — tailnet + RDP + receiver
+        if: ${{ inputs.os == 'windows' }}
+        shell: pwsh
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile ts.msi
+          Start-Process msiexec.exe -ArgumentList "/i ts.msi /quiet" -Wait
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          & $ts up --authkey="$env:TS_AUTHKEY" --hostname=relay-ci-win --unattended
+          Start-Sleep 3
+          $tsip = (& $ts ip -4 | Select-Object -First 1).Trim()
+          # enable Remote Desktop
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          $pw = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 14 | ForEach-Object {[char]$_})
+          net user runneradmin "$pw"
+          Start-Process -FilePath ".\desktop\target\release\relay-desktop.exe" -ArgumentList "--token","4321","--port","47600"
+          Write-Host "==================================================================="
+          Write-Host "  WATCH:  Remmina -> RDP -> $tsip   (user: runneradmin  password: $pw)"
+          Write-Host "  DRIVE:  phone Relay -> WiFi -> connect to  $tsip : 47600   PIN 4321"
+          Write-Host "  Holding for $env:MINUTES min..."
+          Write-Host "==================================================================="
+          Start-Sleep -Seconds ([int]$env:MINUTES * 60)
+
+      - name: Leave tailnet
+        if: always()
+        continue-on-error: true
+        run: tailscale logout || true
+        shell: bash
