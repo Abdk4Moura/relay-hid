@@ -199,6 +199,7 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
     var alt by remember { mutableStateOf(false) }
     var gui by remember { mutableStateOf(false) }
     var caps by remember { mutableStateOf(false) }
+    var loneMode by remember { mutableStateOf(false) }   // sticky: when on, a modifier chip fires ALONE (lone press)
     var lastShiftTap by remember { mutableLongStateOf(0L) }
     var lastGuiTap by remember { mutableLongStateOf(0L) }
     var lastCombo by remember { mutableStateOf("—") }
@@ -234,7 +235,21 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
         if (!caps && !keepShift) shift = false   // shift is one-shot on printable keys (phone-style); arrows keep it for shift+select
         clearOneShot()
     }
+    // Lone-modifier mode: tapping a modifier chip sends THAT modifier by itself (key code 0 + its bit),
+    // e.g. Super alone → Start menu / COSMIC launcher. Mirrors modMask()'s bits (incl. the Cmd/Ctrl swap).
+    fun loneBit(which: String): Pair<Int, String> = when (which) {
+        "ctrl"  -> (if (c.swapCmd) HidConstants.MOD_LGUI else HidConstants.MOD_LCTRL) to c.ctrlKey.first
+        "alt"   -> HidConstants.MOD_LALT to c.altKey.first
+        "gui"   -> (if (c.swapCmd) HidConstants.MOD_LCTRL else HidConstants.MOD_LGUI) to c.guiKey.first
+        "shift" -> HidConstants.MOD_LSHIFT to "⇧"
+        else    -> 0 to ""
+    }
     fun tapMod(which: String) {
+        if (loneMode && which in setOf("ctrl", "alt", "gui", "shift")) {
+            val (bit, label) = loneBit(which)
+            c.tapKey(bit, 0); c.logEvent("key", "$label (alone)")
+            return
+        }
         when (which) {
             "ctrl" -> ctrl = !ctrl
             "shift" -> {
@@ -244,11 +259,7 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
                 lastShiftTap = now
             }
             "alt" -> alt = !alt
-            "gui" -> gui = !gui   // tap to arm/disarm for combos; lone-press is the dedicated key below
-            "guiAlone" -> {       // dedicated single-tap → send the GUI/Super key BY ITSELF (Start/Activities)
-                val guiBit = if (c.swapCmd) HidConstants.MOD_LCTRL else HidConstants.MOD_LGUI
-                c.tapKey(guiBit, 0); c.logEvent("key", "${c.guiKey.first} (alone)")
-            }
+            "gui" -> gui = !gui
             "caps" -> if (c.capsEsc) emit("esc", 0, HidConstants.KEY_ESC, null) else caps = !caps
         }
     }
@@ -287,8 +298,9 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
     BoxWithConstraints(Modifier.fillMaxSize().background(col.bgDeep)) {
         val portrait = maxHeight >= maxWidth
         if (portrait) {
-            PortraitThumb(c, layer, shift, caps, ctrl, alt, gui, lastCombo, immersive, onToggleImmersive, buf, caret,
-                onMod = ::tapMod, onChar = ::sendChar, onSpecial = ::special, onTogglePreview = { c.updateShowPreview(!c.showPreview) })
+            PortraitThumb(c, layer, shift, caps, ctrl, alt, gui, loneMode, lastCombo, immersive, onToggleImmersive, buf, caret,
+                onMod = ::tapMod, onChar = ::sendChar, onSpecial = ::special, onToggleLone = { loneMode = !loneMode },
+                onTogglePreview = { c.updateShowPreview(!c.showPreview) })
         } else {
             LandscapeDesktop(c, ctrl, shift, alt, gui, caps, flashId, lastCombo, immersive, onToggleImmersive,
                 onMod = ::tapMod, onKey = ::sendKey, onSpecial = ::special, onChar = ::sendChar)
@@ -301,8 +313,9 @@ fun KeyboardScreen(c: RelayController, immersive: Boolean, onToggleImmersive: ()
 @Composable
 private fun PortraitThumb(
     c: RelayController, layer: Layer, shift: Boolean, caps: Boolean, ctrl: Boolean, alt: Boolean, gui: Boolean,
-    lastCombo: String, immersive: Boolean, onToggleImmersive: () -> Unit, buf: String, caret: Int,
-    onMod: (String) -> Unit, onChar: (Char) -> Unit, onSpecial: (String) -> Unit, onTogglePreview: () -> Unit,
+    loneMode: Boolean, lastCombo: String, immersive: Boolean, onToggleImmersive: () -> Unit, buf: String, caret: Int,
+    onMod: (String) -> Unit, onChar: (Char) -> Unit, onSpecial: (String) -> Unit, onToggleLone: () -> Unit,
+    onTogglePreview: () -> Unit,
 ) {
     val col = Relay.colors
     val view = LocalView.current
@@ -321,7 +334,7 @@ private fun PortraitThumb(
     Column(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 10.dp)) {
       if (padFull) {
         var gyroMode by remember { mutableStateOf(false) }
-        ModifierBar(c, ctrl, shift, alt, gui, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
+        ModifierBar(c, ctrl, shift, alt, gui, loneMode, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
         Spacer(Modifier.height(6.dp))
         val padBase = Modifier.fillMaxWidth().weight(1f).then(trackpadCanvas(c))
         if (gyroMode) {
@@ -378,10 +391,10 @@ private fun PortraitThumb(
             },
             onSettle = { overshoot = 0f; c.updateKeyHeight(kh.roundToInt()) },
         )
-        // Thin strip below the trackpad handle: tiny dedicated Super/GUI key on the left (single tap
-        // sends the modifier BY ITSELF → Start menu / COSMIC launcher / Activities), live readout centered.
+        // Thin strip below the trackpad handle: sticky LONE switch on the left (when on, tapping any
+        // modifier chip sends it BY ITSELF → e.g. Super alone = Start/launcher), live readout centered.
         Box(Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 4.dp, vertical = 2.dp)) {
-            LoneKey(c.guiKey.first, c.haptics, Modifier.align(Alignment.CenterStart)) { onMod("guiAlone") }
+            LoneSwitch(loneMode, c.haptics, Modifier.align(Alignment.CenterStart), onToggleLone)
             if (c.showReadout) {
                 Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
                     Text("SENDING ", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.sp))
@@ -390,7 +403,7 @@ private fun PortraitThumb(
                 }
             }
         }
-        ModifierBar(c, ctrl, shift, alt, gui, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
+        ModifierBar(c, ctrl, shift, alt, gui, loneMode, immersive, onToggleImmersive, onMod, onSpecial, c.haptics)
         Spacer(Modifier.height(8.dp))
         if (oneHand) {
             Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = if (c.oneHandSide == "right") Arrangement.Start else Arrangement.End) {
@@ -697,51 +710,53 @@ private fun ArrowGuide(g: String, active: Boolean, modifier: Modifier) {
 
 @Composable
 private fun ModifierBar(
-    c: RelayController, ctrl: Boolean, shift: Boolean, alt: Boolean, gui: Boolean, immersive: Boolean, onToggleImmersive: () -> Unit,
+    c: RelayController, ctrl: Boolean, shift: Boolean, alt: Boolean, gui: Boolean, loneMode: Boolean, immersive: Boolean, onToggleImmersive: () -> Unit,
     onMod: (String) -> Unit, onSpecial: (String) -> Unit, haptic: Boolean,
 ) {
-    // All controls weight-shared so they always fit.
+    // All controls weight-shared so they always fit. In lone mode the modifier chips get an accent
+    // outline to signal "a tap fires this key on its own."
     Row(Modifier.fillMaxWidth().height(46.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-        BarChip(c.ctrlKey.first, ctrl, haptic, Modifier.weight(1f)) { onMod("ctrl") }
-        BarChip(c.altKey.first, alt, haptic, Modifier.weight(1f)) { onMod("alt") }
-        BarChip(c.guiKey.first, gui, haptic, Modifier.weight(1f)) { onMod("gui") }
-        BarChip("⇧", shift, haptic, Modifier.weight(1f)) { onMod("shift") }
+        BarChip(c.ctrlKey.first, ctrl, haptic, Modifier.weight(1f), lone = loneMode) { onMod("ctrl") }
+        BarChip(c.altKey.first, alt, haptic, Modifier.weight(1f), lone = loneMode) { onMod("alt") }
+        BarChip(c.guiKey.first, gui, haptic, Modifier.weight(1f), lone = loneMode) { onMod("gui") }
+        BarChip("⇧", shift, haptic, Modifier.weight(1f), lone = loneMode) { onMod("shift") }
         BarChip("esc", false, haptic, Modifier.weight(1f)) { onSpecial("esc") }
         FullscreenToggle(immersive, onToggleImmersive)
     }
 }
 
 @Composable
-private fun RowScope.BarChip(label: String, armed: Boolean, haptic: Boolean, modifier: Modifier = Modifier, repeat: Boolean = false, onLong: (() -> Unit)? = null, onTap: () -> Unit) {
+private fun RowScope.BarChip(label: String, armed: Boolean, haptic: Boolean, modifier: Modifier = Modifier, repeat: Boolean = false, lone: Boolean = false, onLong: (() -> Unit)? = null, onTap: () -> Unit) {
     val col = Relay.colors
-    KeyShell(modifier.fillMaxHeight(), sculpted = false, action = false, armed = armed, flashed = false, haptic = haptic, repeat = repeat, onLong = onLong, onDown = onTap) {
-        Text(label, maxLines = 1, style = Relay.type.mono.copy(color = if (armed) col.accent else col.textDim, fontSize = if (label.length > 2) 11.5.sp else 14.sp))
+    val shape = RoundedCornerShape(10.dp)
+    val m = if (lone && !armed) modifier.fillMaxHeight().border(1.dp, col.accent.copy(alpha = 0.55f), shape) else modifier.fillMaxHeight()
+    KeyShell(m, sculpted = false, action = false, armed = armed, flashed = false, haptic = haptic, repeat = repeat, onLong = onLong, onDown = onTap) {
+        Text(label, maxLines = 1, style = Relay.type.mono.copy(color = if (armed || lone) col.accent else col.textDim, fontSize = if (label.length > 2) 11.5.sp else 14.sp))
     }
 }
 
-// Tiny dedicated key — a single tap sends the Super/GUI key BY ITSELF (no arming, no double-tap,
-// no long-press). Accent-filled so it reads as "fires now" vs the outlined arming chips. Lives in
-// the dead strip just below the trackpad handle.
+// Sticky LONE switch — when on, tapping any modifier chip sends that modifier BY ITSELF (e.g. Super
+// alone → Start / COSMIC launcher), instead of arming it for a combo. Lives in the dead strip below
+// the trackpad handle, where the modifier bar starts.
 @Composable
-private fun LoneKey(glyph: String, haptic: Boolean, modifier: Modifier = Modifier, onTap: () -> Unit) {
+private fun LoneSwitch(on: Boolean, haptic: Boolean, modifier: Modifier = Modifier, onToggle: () -> Unit) {
     val col = Relay.colors
     val view = LocalView.current
-    var flash by remember { mutableStateOf(false) }
-    LaunchedEffect(flash) { if (flash) { kotlinx.coroutines.delay(120); flash = false } }
-    val word = glyph.length > 1
-    Box(
-        modifier.height(26.dp).widthIn(min = if (word) 52.dp else 34.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (flash) col.accent else col.accent.copy(alpha = 0.15f))
-            .border(1.dp, col.accent.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-            .pointerInput(Unit) { detectTapGestures(onTap = { if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); flash = true; onTap() }) }
-            .padding(horizontal = 9.dp),
-        contentAlignment = Alignment.Center,
+    val shape = RoundedCornerShape(13.dp)
+    Row(
+        modifier.height(26.dp)
+            .clip(shape)
+            .background(if (on) col.accent.copy(alpha = 0.18f) else col.surface)
+            .border(1.dp, if (on) col.accent.copy(alpha = 0.7f) else col.border, shape)
+            .pointerInput(Unit) { detectTapGestures(onTap = { if (haptic) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); onToggle() }) }
+            .padding(start = 7.dp, end = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Text(glyph, maxLines = 1, style = Relay.type.mono.copy(
-            color = if (flash) col.bg else col.accent,
-            fontSize = if (word) 10.sp else 14.sp,
-            fontWeight = FontWeight.Bold))
+        // little LED that lights when armed
+        Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (on) col.accent else col.textFaint))
+        Text("LONE", maxLines = 1, style = Relay.type.mono.copy(
+            color = if (on) col.accent else col.textDim, fontSize = 10.sp, fontWeight = FontWeight.Bold))
     }
 }
 
