@@ -49,7 +49,7 @@ jobs:
           TS=/opt/homebrew/bin/tailscale
           sudo /opt/homebrew/bin/tailscaled > /tmp/tailscaled.log 2>&1 &
           sleep 4
-          sudo "$TS" up --authkey="$TS_AUTHKEY" --hostname=relay-ci-mac --accept-routes --ssh
+          sudo "$TS" up --authkey="$TS_AUTHKEY" --hostname=relay-ci-mac --accept-routes
           sleep 2
           TSIP=$("$TS" ip -4 | head -1)
           VNCPW=$(openssl rand -hex 4)   # legacy VNC password is max 8 chars
