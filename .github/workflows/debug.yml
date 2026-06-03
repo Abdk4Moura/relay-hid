@@ -1,0 +1,38 @@
+name: debug
+
+# Interactive "raw machine" to iterate on the tricky Win/Mac setup live, instead of
+# burning many blind CI deploys. It builds the receiver, then opens an SSH session
+# (tmate) INTO the runner. SSH in from pop-os, try commands until they work, then we
+# bake the proven sequence into livetest.yml.
+#
+#   ssh access is limited to YOUR GitHub-registered SSH keys (github.com/settings/keys).
+#   TS_AUTHKEY is exported in the shell so you can test `tailscale up` immediately.
+#   Run `touch /continue` (or `touch C:\continue`) in the SSH session to end early.
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Which OS to debug
+        type: choice
+        options: [macos, windows]
+        default: macos
+
+jobs:
+  debug:
+    runs-on: ${{ inputs.os == 'macos' && 'macos-latest' || 'windows-latest' }}
+    timeout-minutes: 45
+    env:
+      TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build receiver
+        working-directory: desktop
+        run: cargo build --release
+
+      - name: Interactive SSH session
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
