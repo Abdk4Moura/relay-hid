@@ -48,7 +48,7 @@ jobs:
           TS=/opt/homebrew/bin/tailscale
           sudo /opt/homebrew/bin/tailscaled > /tmp/tailscaled.log 2>&1 &
           sleep 4
-          sudo "$TS" up --authkey="$TS_AUTHKEY" --hostname=relay-ci-mac --accept-routes
+          sudo "$TS" up --authkey="$TS_AUTHKEY" --hostname=relay-ci-mac --accept-routes --ssh
           sleep 2
           TSIP=$("$TS" ip -4 | head -1)
           VNCPW=$(openssl rand -hex 4)   # legacy VNC password is max 8 chars
@@ -56,6 +56,11 @@ jobs:
             -activate -configure -access -on -restart -agent -privs -all \
             -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$VNCPW" || true
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          # keep the (virtual) display awake so Screen Sharing shows a real desktop, not black
+          sudo pmset -a displaysleep 0 sleep 0 disksleep 0 2>/dev/null || true
+          caffeinate -dimsu -t $(( MINUTES * 60 + 120 )) >/dev/null 2>&1 &
+          # nudge the display awake right now
+          caffeinate -u -t 2 >/dev/null 2>&1 || true
           ./desktop/target/release/relay-desktop --token 4321 --port 47600 &
           echo "::notice title=LIVE TEST READY (macOS)::VNC $TSIP  pw $VNCPW  |  phone → $TSIP:47600 PIN 4321"
           echo "==================================================================="
