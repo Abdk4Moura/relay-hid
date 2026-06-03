@@ -1,6 +1,6 @@
 [package]
 name = "relay-desktop"
-version = "0.9.2"
+version = "0.10.0"
 edition = "2021"
 description = "Relay receiver — turns this computer into a wireless keyboard/mouse/clipboard/file target for the Relay phone app, with a local web control panel, mDNS discovery and QR pairing. Runs on Linux, Windows and macOS."
 
