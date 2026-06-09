@@ -432,6 +432,7 @@ class RelayController private constructor(private val context: Context) : HidPer
     var oneHandSide by mutableStateOf(prefs.getString("oneHandSide", "right")!!); private set        // left | right
     var sensitivity by mutableStateOf(prefs.getInt("sensitivity", 5)); private set
     var accel by mutableStateOf(prefs.getInt("accel", 5)); private set
+    var accelProfile by mutableStateOf(prefs.getString("accelProfile", "adaptive")!!); private set  // adaptive | flat
     var sideBias by mutableStateOf(prefs.getInt("sideBias", 6)); private set   // 0=even, 10=strongly horizontal
     var showPreview by mutableStateOf(prefs.getBoolean("showPreview", true)); private set
     var padStyle by mutableStateOf(prefs.getString("padStyle", "gradient")!!); private set   // gradient | dots | plain
@@ -448,6 +449,8 @@ class RelayController private constructor(private val context: Context) : HidPer
     var clipboardAuto by mutableStateOf(prefs.getBoolean("clipboardAuto", true)); private set     // accept desktop→phone clipboard
     var notifySync by mutableStateOf(prefs.getBoolean("notifySync", true)); private set           // notify on clipboard/file sync
     var momentum by mutableStateOf(prefs.getBoolean("momentum", true)); private set
+    var edgeScroll by mutableStateOf(prefs.getBoolean("edgeScroll", true)); private set   // right-edge one-finger scroll gutter
+    var scrollLock by mutableStateOf(false)   // runtime: sticky whole-pad scroll mode (one-handed); not persisted
     var firmPress by mutableStateOf(prefs.getBoolean("firmPress", false)); private set         // firm tap → right-click
     var volumeKeys by mutableStateOf(prefs.getString("volumeKeys", "off")!!); private set      // off | scroll | page | click
     var swapCmd by mutableStateOf(prefs.getBoolean("swapCmd", false)); private set
@@ -562,6 +565,7 @@ class RelayController private constructor(private val context: Context) : HidPer
     }
     fun updateSensitivity(v: Int) { sensitivity = v; prefs.edit().putInt("sensitivity", v).apply() }
     fun updateAccel(v: Int) { accel = v; prefs.edit().putInt("accel", v).apply() }
+    fun updateAccelProfile(v: String) { accelProfile = v; prefs.edit().putString("accelProfile", v).apply() }
     fun updateSideBias(v: Int) { sideBias = v; prefs.edit().putInt("sideBias", v).apply() }
     fun updateShowPreview(v: Boolean) { showPreview = v; prefs.edit().putBoolean("showPreview", v).apply() }
     fun updatePadStyle(v: String) { padStyle = v; prefs.edit().putString("padStyle", v).apply() }
@@ -582,6 +586,7 @@ class RelayController private constructor(private val context: Context) : HidPer
         prefs.edit().putString("profile", v).putBoolean("swapCmd", swapCmd).apply()
     }
     fun updateMomentum(v: Boolean) { momentum = v; prefs.edit().putBoolean("momentum", v).apply() }
+    fun updateEdgeScroll(v: Boolean) { edgeScroll = v; prefs.edit().putBoolean("edgeScroll", v).apply() }
     fun updateFirmPress(v: Boolean) { firmPress = v; prefs.edit().putBoolean("firmPress", v).apply() }
     fun updateVolumeKeys(v: String) { volumeKeys = v; prefs.edit().putString("volumeKeys", v).apply() }
 
@@ -589,6 +594,25 @@ class RelayController private constructor(private val context: Context) : HidPer
     fun scroll(amount: Int) = mouseMove(0, 0, amount, 0)
     /** Horizontal scroll (side-scroll). WiFi/desktop only — BT mouse descriptor has no pan axis yet. */
     fun scrollH(amount: Int) { if (useWifi) wifi.hscroll(amount) }
+
+    // High-res scroll carry for the Bluetooth-HID fallback (BT wheel is whole-lines only).
+    private var hrBtV = 0
+    /**
+     * Smooth, high-resolution scroll. `dy120`/`dx120` are in 1/120 of a wheel detent, so the
+     * trackpad can stream sub-line scroll. Over WiFi the receiver renders it smoothly
+     * (REL_WHEEL_HI_RES); over Bluetooth there is no hi-res wheel, so we accumulate to whole lines.
+     */
+    fun scrollHires(dy120: Int, dx120: Int = 0) {
+        if (useWifi) {
+            if (dy120 != 0) wifi.scrollHr(dy120)
+            if (dx120 != 0) wifi.hscrollHr(dx120)
+        } else if (dy120 != 0) {
+            hrBtV += dy120
+            val lines = hrBtV / 120
+            if (lines != 0) { hrBtV -= lines * 120; hid.sendMouseMove(0, 0, lines, 0) }
+            // BT mouse descriptor has no pan axis, so dx120 (side-scroll) is dropped here.
+        }
+    }
     fun click(right: Boolean = false) {
         val b = if (right) HidConstants.MOUSE_RIGHT else HidConstants.MOUSE_LEFT
         mouseMove(0, 0, 0, b); mouseMove(0, 0, 0, 0)

@@ -57,6 +57,10 @@ enum Msg {
     Moveto { x: i32, y: i32 },
     Scroll { dy: i32 },
     Hscroll { dx: i32 },
+    // high-resolution scroll: values are in 1/120 of a wheel detent (the Linux REL_WHEEL_HI_RES /
+    // Windows WHEEL_DELTA convention), so the phone can stream smooth, sub-line scroll.
+    Scrollhr { dy: i32 },
+    Hscrollhr { dx: i32 },
     Button { b: String, down: bool },
     Click { b: String },
     Consumer { usage: u16 },
@@ -109,6 +113,10 @@ struct Injector {
     /// Separate absolute-pointer device for `moveto` (computer-use agent). Optional: if the
     /// kernel/compositor rejects it we degrade gracefully and ignore `moveto`.
     abs_dev: Option<evdev::uinput::VirtualDevice>,
+    /// Carry for high-res scroll: leftover 1/120 units below a full detent, so the coarse
+    /// REL_WHEEL fallback fires exactly once per accumulated notch.
+    hires_v: i32,
+    hires_h: i32,
 }
 
 #[cfg(target_os = "linux")]
@@ -123,6 +131,8 @@ impl Injector {
         axes.insert(RelativeAxisType::REL_Y);
         axes.insert(RelativeAxisType::REL_WHEEL);
         axes.insert(RelativeAxisType::REL_HWHEEL);   // side-scroll
+        axes.insert(RelativeAxisType::REL_WHEEL_HI_RES);   // smooth scroll (120 units/detent)
+        axes.insert(RelativeAxisType::REL_HWHEEL_HI_RES);
         let dev = VirtualDeviceBuilder::new()?
             .name("Relay Virtual Input")
             .with_keys(&keys)?
@@ -132,7 +142,7 @@ impl Injector {
             eprintln!("(absolute pointer disabled — `moveto` will be ignored: {e})");
             None
         });
-        Ok(Self { dev, abs_dev })
+        Ok(Self { dev, abs_dev, hires_v: 0, hires_h: 0 })
     }
 
     fn emit(&mut self, events: &[InputEvent]) {
@@ -218,6 +228,49 @@ impl Injector {
             RelativeAxisType::REL_HWHEEL.0,
             dx,
         )]);
+        self.flush();
+    }
+
+    /// High-res vertical scroll: `v120` is in 1/120 of a detent. Emit REL_WHEEL_HI_RES every
+    /// event (smooth), plus a coarse REL_WHEEL each time a full 120 accumulates (libinput and
+    /// X11 expect both; the discrete event is the fallback for apps that ignore hi-res).
+    fn scroll_hr(&mut self, v120: i32) {
+        self.hires_v += v120;
+        let notches = self.hires_v / 120;
+        self.hires_v -= notches * 120;
+        let mut evs = vec![InputEvent::new(
+            EventType::RELATIVE,
+            RelativeAxisType::REL_WHEEL_HI_RES.0,
+            v120,
+        )];
+        if notches != 0 {
+            evs.push(InputEvent::new(
+                EventType::RELATIVE,
+                RelativeAxisType::REL_WHEEL.0,
+                notches,
+            ));
+        }
+        self.emit(&evs);
+        self.flush();
+    }
+
+    fn hscroll_hr(&mut self, v120: i32) {
+        self.hires_h += v120;
+        let notches = self.hires_h / 120;
+        self.hires_h -= notches * 120;
+        let mut evs = vec![InputEvent::new(
+            EventType::RELATIVE,
+            RelativeAxisType::REL_HWHEEL_HI_RES.0,
+            v120,
+        )];
+        if notches != 0 {
+            evs.push(InputEvent::new(
+                EventType::RELATIVE,
+                RelativeAxisType::REL_HWHEEL.0,
+                notches,
+            ));
+        }
+        self.emit(&evs);
         self.flush();
     }
 
@@ -362,6 +415,8 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
             Msg::Moveto { x, y } => format!("moveto {x},{y}"),
             Msg::Scroll { .. } => "scroll".into(),
             Msg::Hscroll { .. } => "hscroll".into(),
+            Msg::Scrollhr { .. } => "scroll".into(),
+            Msg::Hscrollhr { .. } => "hscroll".into(),
             Msg::Button { b, down } => format!("{b} {}", if *down { "down" } else { "up" }),
             Msg::Click { b } => format!("{b} click"),
             Msg::Consumer { usage } => format!("media 0x{usage:02x}"),
@@ -417,6 +472,8 @@ fn handle(stream: TcpStream, token: &str, inj: &SharedInj, st: &Shared, fails: &
                         Msg::Moveto { x, y } => g.move_abs(x, y),
                         Msg::Scroll { dy } => g.scroll(dy),
                         Msg::Hscroll { dx } => g.hscroll(dx),
+                        Msg::Scrollhr { dy } => g.scroll_hr(dy),
+                        Msg::Hscrollhr { dx } => g.hscroll_hr(dx),
                         Msg::Button { b, down } => g.button(&b, down),
                         Msg::Click { b } => g.click(&b),
                         Msg::Consumer { usage } => g.consumer(usage),

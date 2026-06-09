@@ -396,6 +396,7 @@ private fun PortraitThumb(
         // modifier chip sends it BY ITSELF → e.g. Super alone = Start/launcher), live readout centered.
         Box(Modifier.fillMaxWidth().height(30.dp).padding(horizontal = 4.dp, vertical = 2.dp)) {
             LoneSwitch(loneMode, c.haptics, Modifier.align(Alignment.CenterStart), onToggleLone)
+            ScrollLockSwitch(c, Modifier.align(Alignment.CenterEnd))
             if (c.showReadout) {
                 Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
                     Text("SENDING ", style = Relay.type.mono.copy(color = col.textFaint, fontSize = 10.sp))
@@ -757,6 +758,36 @@ private fun LoneSwitch(on: Boolean, haptic: Boolean, modifier: Modifier = Modifi
         // little LED that lights when armed
         Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (on) col.accent else col.textFaint))
         Text("SOLO", maxLines = 1, style = Relay.type.mono.copy(
+            color = if (on) col.accent else col.textDim, fontSize = 10.sp, fontWeight = FontWeight.Bold))
+    }
+}
+
+/** Sticky whole-pad scroll toggle (one-handed). Same house style as SOLO: tap to latch, the pad
+ *  then scrolls instead of moving the pointer. */
+@Composable
+private fun ScrollLockSwitch(c: RelayController, modifier: Modifier = Modifier) {
+    val col = Relay.colors
+    val view = LocalView.current
+    val on = c.scrollLock
+    val shape = RoundedCornerShape(13.dp)
+    Row(
+        modifier.height(26.dp)
+            .clip(shape)
+            .background(if (on) col.accent.copy(alpha = 0.18f) else col.surface)
+            .border(1.dp, if (on) col.accent.copy(alpha = 0.7f) else col.border, shape)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    c.scrollLock = !c.scrollLock
+                    if (c.haptics) view.performHapticFeedback(
+                        if (c.scrollLock) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP)
+                })
+            }
+            .padding(start = 7.dp, end = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(if (on) col.accent else col.textFaint))
+        Text("SCROLL", maxLines = 1, style = Relay.type.mono.copy(
             color = if (on) col.accent else col.textDim, fontSize = 10.sp, fontWeight = FontWeight.Bold))
     }
 }
@@ -1253,35 +1284,107 @@ private fun DragHandle(onUp: () -> Unit, onDown: () -> Unit, onTap: () -> Unit) 
     }
 }
 
+// Scroll is carried in 1/120-of-a-detent units (REL_WHEEL_HI_RES / Windows WHEEL_DELTA), so the
+// pad streams smooth, sub-line scroll. One finger-pixel maps to this many hi-res units at scrollSpeed 5.
+private const val HR_PER_PX = 21.6f      // 0.18 lines/px * 120
+private const val HR_DETENT = 120f
+private const val HR_CLAMP = 3000        // per-message safety cap (~25 lines)
+
+/** Adaptive pointer-acceleration gain (libinput-style): precision floor when slow, ~1:1 in the
+ *  middle, ramping to a ceiling for fast flicks. `sens` (the slider) multiplies on top. */
+private fun accelGain(speedDpPerMs: Float, profile: String, sens: Float, accel: Int): Float {
+    if (profile == "flat") return sens
+    val gMin = 0.4f
+    val gMax = 1.8f + (accel / 10f) * 2.4f       // accel 0→1.8, 5→3.0, 10→4.2
+    val sMin = 0.2f; val sMax = 2.6f             // dp/ms thresholds
+    val t = ((speedDpPerMs - sMin) / (sMax - sMin)).coerceIn(0f, 1f)
+    val ramp = t * t * (3f - 2f * t)             // smoothstep
+    return (gMin + (gMax - gMin) * ramp) * sens
+}
+
+/** Very faint scroll-detent tick: a low-amplitude composition primitive where supported, else a
+ *  system clock-tick. Kept subtle because it fires often. */
+private fun subtleTick(view: android.view.View) {
+    val ctx = view.context
+    if (android.os.Build.VERSION.SDK_INT >= 31) {
+        val vib = (ctx.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE)
+            as? android.os.VibratorManager)?.defaultVibrator
+        if (vib != null && vib.areAllPrimitivesSupported(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
+            vib.vibrate(
+                android.os.VibrationEffect.startComposition()
+                    .addPrimitive(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.22f)
+                    .compose()
+            )
+            return
+        }
+    }
+    view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+}
+
 /**
  * Multi-touch trackpad engine:
- *  • 1 finger drag → move pointer (sensitivity + acceleration)
- *  • 2 finger drag → scroll wheel (respects natural-scroll)
- *  • tap (no move) → left click ·  2-finger tap → right click
+ *  • 1 finger drag → move pointer (adaptive acceleration); right-edge gutter or sticky Scroll lock → scroll
+ *  • 2 finger drag → smooth hi-res scroll (vertical + side), with momentum (respects natural-scroll)
+ *  • tap → left click ·  2-finger tap / firm tap → right click ·  long-press → drag-lock
+ *  • 3-finger swipe → app switch · 3-finger tap → find pointer
  */
 private fun Modifier.trackpadGestures(c: RelayController, view: android.view.View, onDrag: (Boolean) -> Unit = {}, onTouch: (Boolean) -> Unit = {}): Modifier = pointerInput(Unit) {
     fun haptic(type: Int) { if (c.haptics) view.performHapticFeedback(type) }
+    val dens = density.coerceAtLeast(0.5f)
     awaitEachGesture {
         val first = awaitFirstDown(requireUnconsumed = false)
         onTouch(true)
+        val padW = size.width.toFloat().coerceAtLeast(1f)
         val downTime = System.currentTimeMillis()
+        // one-handed scroll: sticky whole-pad lock, or a touch that begins in the right-edge gutter
+        val gutter = c.edgeScroll && first.position.x > padW * 0.86f
+        val scrollModeOne = c.scrollLock || gutter
         var lastOne = first.position
+        var lastT = downTime
         var lastCentroid: Offset? = null
         var maxPointers = 1
         var moved = false
         var dragging = false        // long-press drag-lock: left button held while moving
-        var scrollAcc = 0f
-        var scrollVel = 0f          // for momentum
+        var scrollAcc = 0f          // hi-res vertical carry
+        var scrollAccX = 0f         // hi-res horizontal (side-scroll) carry
+        var scrollVel = 0f          // hi-res units/event, for momentum
+        var detentCarry = 0f        // accumulates emitted hi-res units → one tick per detent
+        var lastTick = 0L
         var maxPressure = first.pressure
         var threeStart: Offset? = null
         var appFired = false        // 3-finger swipe → ⌘Tab (once per gesture)
         var twoStart: Offset? = null
         var twoMode = 0             // 0 = undecided, 1 = scroll (both axes), 2 = nav (back/forward)
-        var scrollAccX = 0f         // sub-pixel horizontal (side-scroll) carry
+
+        fun detent(units: Int) {
+            if (!c.haptics) return
+            detentCarry += abs(units).toFloat()
+            if (detentCarry >= HR_DETENT) {
+                detentCarry -= HR_DETENT * (detentCarry / HR_DETENT).toInt()
+                val now = System.currentTimeMillis()
+                if (now - lastTick > 28L) { lastTick = now; subtleTick(view) }   // rate-limit so fast flings don't buzz
+            }
+        }
+        // Emit a vertical hi-res scroll step from a finger delta (used by 2-finger and one-handed scroll).
+        fun scrollStep(dyPx: Float, dxPx: Float) {
+            moved = true
+            val dir = if (c.naturalScroll) -1 else 1
+            val gainHr = (c.scrollSpeed / 5f) * HR_PER_PX
+            val stepY = dyPx * dir * gainHr
+            scrollAcc += stepY; scrollVel = scrollVel * 0.6f + stepY * 0.4f
+            val sy = scrollAcc.roundToInt()
+            if (sy != 0) { c.scrollHires(sy.coerceIn(-HR_CLAMP, HR_CLAMP), 0); scrollAcc -= sy; detent(sy) }
+            if (dxPx != 0f) {
+                scrollAccX += dxPx * dir * gainHr
+                val sx = scrollAccX.roundToInt()
+                if (sx != 0) { c.scrollHires(0, sx.coerceIn(-HR_CLAMP, HR_CLAMP)); scrollAccX -= sx }
+            }
+        }
+
         while (true) {
             val ev = withTimeoutOrNull(55) { awaitPointerEvent() }   // poll so a stationary long-press registers
             if (ev == null) {
-                if (!dragging && !moved && maxPointers == 1 && System.currentTimeMillis() - downTime > 350L) {
+                if (!dragging && !moved && !scrollModeOne && maxPointers == 1 && System.currentTimeMillis() - downTime > 350L) {
                     dragging = true; onDrag(true); haptic(android.view.HapticFeedbackConstants.LONG_PRESS)
                     c.mouseMove(0, 0, 0, HidConstants.MOUSE_LEFT)   // grab (press & hold)
                     c.logEvent("click", "drag start")
@@ -1309,7 +1412,7 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                 lastCentroid?.let { prev ->
                     val dx = cen.x - prev.x; val dy = cen.y - prev.y
                     // Decide once: a quick, horizontal-dominant flick = back/forward nav; anything
-                    // else = a 2-finger scroll (now omnidirectional — vertical AND side-scroll).
+                    // else = a 2-finger scroll (omnidirectional — vertical AND side-scroll).
                     if (twoMode == 0) {
                         if (c.swipeNav && abs(dx) > 22f && abs(dx) > abs(dy) * 1.6f) {
                             twoMode = 2; moved = true
@@ -1322,16 +1425,7 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                             twoMode = 1
                         }
                     }
-                    if (twoMode == 1) {
-                        moved = true
-                        val dir = if (c.naturalScroll) -1 else 1
-                        val gain = (c.scrollSpeed / 5f) * 0.18f
-                        val stepY = dy * dir * gain
-                        scrollAcc += stepY; scrollVel = scrollVel * 0.6f + stepY * 0.4f
-                        val sy = scrollAcc.roundToInt(); if (sy != 0) { c.mouseMove(0, 0, sy.coerceIn(-18, 18), 0); scrollAcc -= sy }
-                        scrollAccX += dx * dir * gain
-                        val sx = scrollAccX.roundToInt(); if (sx != 0) { c.scrollH(sx.coerceIn(-18, 18)); scrollAccX -= sx }
-                    }
+                    if (twoMode == 1) scrollStep(dy, dx)
                 }
                 lastCentroid = cen
                 pressed.forEach { it.consume() }
@@ -1343,14 +1437,21 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                 val ch = pressed.first()
                 val d = ch.position - lastOne
                 lastOne = ch.position
+                val now = System.currentTimeMillis()
+                val dt = (now - lastT).coerceAtLeast(1)
+                lastT = now
                 val dist = d.getDistance()
                 if (dist > 0.4f) {
                     if (dist > 6f) moved = true
-                    val s = c.sensitivity / 5f
-                    val a = c.accel / 10f
-                    val btn = if (dragging) HidConstants.MOUSE_LEFT else 0   // hold button while drag-locked
-                    val ix = if (c.invertX) -1 else 1; val iy = if (c.invertY) -1 else 1
-                    c.mouseMove((ix * d.x * (s + abs(d.x) * a * 0.10f)).roundToInt(), (iy * d.y * (s + abs(d.y) * a * 0.10f)).roundToInt(), 0, btn)
+                    if (scrollModeOne) {
+                        scrollStep(d.y, 0f)             // one-handed: vertical finger → scroll
+                    } else {
+                        val speedDp = (dist / dens) / dt    // dp/ms
+                        val g = accelGain(speedDp, c.accelProfile, c.sensitivity / 5f, c.accel)
+                        val btn = if (dragging) HidConstants.MOUSE_LEFT else 0   // hold button while drag-locked
+                        val ix = if (c.invertX) -1 else 1; val iy = if (c.invertY) -1 else 1
+                        c.mouseMove((ix * d.x * g).roundToInt(), (iy * d.y * g).roundToInt(), 0, btn)
+                    }
                 }
                 ch.consume()
             }
@@ -1368,14 +1469,15 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                 c.logEvent("click", if (right) "secondary click" else "primary click")
             }
             else -> {
-                // momentum scroll: keep scrolling on a flick, decaying, until a new touch lands
-                if (c.momentum && abs(scrollVel) > 1.2f) {
-                    var v = scrollVel * 1.6f
-                    while (abs(v) > 0.8f) {
+                // momentum scroll: fling decays exponentially (iOS-style), streaming hi-res deltas,
+                // until it falls below threshold or a new touch lands.
+                if (c.momentum && abs(scrollVel) > 60f) {     // ~0.5 line
+                    var v = scrollVel * 1.4f
+                    while (abs(v) > 12f) {                     // stop ~0.1 line
                         val nd = withTimeoutOrNull(16) { awaitFirstDown(requireUnconsumed = false) }
                         if (nd != null) break
-                        c.mouseMove(0, 0, v.roundToInt().coerceIn(-18, 18), 0)
-                        v *= 0.90f
+                        c.scrollHires(v.roundToInt().coerceIn(-HR_CLAMP, HR_CLAMP), 0)
+                        v *= 0.94f
                     }
                 }
             }

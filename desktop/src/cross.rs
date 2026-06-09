@@ -22,12 +22,16 @@ unsafe impl Send for SendEnigo {}
 /// Replays phone input on this machine via the OS's synthetic-input API.
 pub struct Injector {
     e: SendEnigo,
+    /// Carry for high-res scroll: enigo 0.2 only does whole-line scroll, so we accumulate the
+    /// phone's 1/120-detent units and emit one line each time a full 120 builds up.
+    hires_v: i32,
+    hires_h: i32,
 }
 
 impl Injector {
     pub fn new() -> std::io::Result<Self> {
         Enigo::new(&Settings::default())
-            .map(|e| Injector { e: SendEnigo(e) })
+            .map(|e| Injector { e: SendEnigo(e), hires_v: 0, hires_h: 0 })
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, format!("{err:?}")))
     }
 
@@ -71,6 +75,28 @@ impl Injector {
 
     pub fn hscroll(&mut self, dx: i32) {
         let _ = self.e.0.scroll(dx, Axis::Horizontal);
+    }
+
+    /// High-res vertical scroll (1/120 detent units). enigo 0.2 has no pixel/hi-res scroll, so
+    /// accumulate to whole lines. (A future enigo bump or direct SendInput/CGEvent call can carry
+    /// the sub-line smoothness through to Windows/macOS; Linux already does via REL_WHEEL_HI_RES.)
+    pub fn scroll_hr(&mut self, v120: i32) {
+        self.hires_v += v120;
+        let lines = self.hires_v / 120;
+        if lines != 0 {
+            self.hires_v -= lines * 120;
+            // HID wheel is +up; enigo vertical scroll is +down → negate so directions agree.
+            let _ = self.e.0.scroll(-lines, Axis::Vertical);
+        }
+    }
+
+    pub fn hscroll_hr(&mut self, v120: i32) {
+        self.hires_h += v120;
+        let lines = self.hires_h / 120;
+        if lines != 0 {
+            self.hires_h -= lines * 120;
+            let _ = self.e.0.scroll(lines, Axis::Horizontal);
+        }
     }
 
     pub fn button(&mut self, b: &str, down: bool) {

@@ -82,13 +82,17 @@ fun SettingsScreen(c: RelayController) {
 
             Group("Cursor & trackpad", expanded) {
                 SettingRow("Pointer sensitivity") { RelaySlider(c.sensitivity, 1, 10, onChange = c::updateSensitivity) }
-                SettingRow("Cursor acceleration", "How fast the space-cursor & pointer ramp up") {
+                SettingRow("Pointer acceleration", "Adaptive = precise when slow, fast on a flick. Flat = 1:1, no curve.") {
+                    Seg(c.accelProfile, listOf("adaptive" to "Adaptive", "flat" to "Flat"), c::updateAccelProfile)
+                }
+                SettingRow("Acceleration strength", "How hard the adaptive curve ramps up on fast moves") {
                     RelaySlider(c.accel, 0, 10, onChange = c::updateAccel)
                 }
                 SettingRow("Scroll speed", "Two-finger scroll — independent of pointer speed") { RelaySlider(c.scrollSpeed, 1, 10, onChange = c::updateScrollSpeed) }
                 SettingRow("Natural scrolling") { RelaySwitch(c.naturalScroll, c::updateNaturalScroll) }
                 SettingRow("Tap to click") { RelaySwitch(c.tapClick, c::updateTapClick) }
                 SettingRow("Momentum scrolling", "Flick two fingers to keep scrolling") { RelaySwitch(c.momentum, c::updateMomentum) }
+                SettingRow("Edge scroll gutter", "One-handed: drag the right edge of the pad to scroll") { RelaySwitch(c.edgeScroll, c::updateEdgeScroll) }
                 if (!portrait) SettingRow("Trackpad auto-return", "Landscape: seconds the full pad waits (idle) before the keyboard returns. 0 = swipe only") {
                     RelaySlider(c.padTimeout, 0, 8, onChange = c::updatePadTimeout)
                 }
