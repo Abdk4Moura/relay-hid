@@ -34,6 +34,26 @@ Set `SCREEN_SOURCE`:
   out-of-band setup: the target runs *nothing* — its HDMI feeds the card, your HID relay drives
   its input. This is the "KVM brain" configuration.
 
+## Live screen to your phone (MJPEG)
+`stream.py` serves the screen you are driving as a **live video your phone's browser can watch**,
+so you can SEE the target while you control it: the BIOS, the login screen, a dead-OS recovery, a
+couch media PC. It serves Motion-JPEG (`multipart/x-mixed-replace`), which every browser renders
+natively in an `<img>` (no app build, no WebRTC, no codec). It reuses the same capture sources as
+the agent (`local` mss / `capture` card), with one capture loop feeding all viewers and a lazy
+start/stop so idle CPU is zero.
+
+```bash
+python stream.py --source test                       # synthetic pattern, verify on any box
+python stream.py --source local                       # stream this machine's display
+python stream.py --source capture --device /dev/video0  # out-of-band: stream the capture card
+```
+Then open the printed URL on the phone:  `http://<this-host-LAN-ip>:47700/?token=<PIN>`.
+
+The stream is gated by a token (defaults to `RELAY_PIN`) and bound to the **LAN only**. It shows
+whatever is on the target, so do not expose it to the open internet without the hosted relay.
+Knobs: `--fps` (default 12), `--quality` (JPEG, default 60), `--max-edge` (downscale cap, 1280px),
+or the env vars `STREAM_PORT` / `STREAM_FPS` / `STREAM_QUALITY` / `STREAM_MAX_EDGE` / `STREAM_PIN`.
+
 ## Setup
 ```bash
 cd agent
@@ -117,6 +137,7 @@ there's no MPX, so you can't have a second independent OS cursor in the same ses
 | `executor.py` | provider-agnostic actions in **pixels** → relay messages; abs/warp mouse mapping |
 | `keymap.py` | symbolic keys ("ctrl+c") → relay HID usage code + modifier bitmask |
 | `screen.py` | pluggable capture: `LocalScreen` (mss) / `CaptureCard` (ffmpeg/v4l2) |
+| `stream.py` | **live screen to the phone browser**: MJPEG server reusing the capture sources, PIN-gated, LAN-bound, lazy start/stop |
 | `providers/gemini.py` | Gemini 2.5 Computer Use loop (browser-only fns excluded) |
 | `providers/anthropic.py` | Claude Computer Use loop (alternative) |
 | `mcp_server.py` | **MCP server**: relay as `screenshot`/`click`/`type_text`/… tools for any MCP agent |
