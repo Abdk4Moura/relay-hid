@@ -55,6 +55,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.channels.Channel
+import androidx.compose.runtime.withFrameNanos
+import kotlin.math.pow
+import kotlin.math.sign
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1291,14 +1298,18 @@ private const val HR_DETENT = 120f
 private const val HR_CLAMP = 3000        // per-message safety cap (~25 lines)
 
 /** Adaptive pointer-acceleration gain (libinput-style): precision floor when slow, ~1:1 in the
- *  middle, ramping to a ceiling for fast flicks. `sens` (the slider) multiplies on top. */
-private fun accelGain(speedDpPerMs: Float, profile: String, sens: Float, accel: Int): Float {
-    if (profile == "flat") return sens
-    val gMin = 0.4f
-    val gMax = 1.8f + (accel / 10f) * 2.4f       // accel 0→1.8, 5→3.0, 10→4.2
-    val sMin = 0.2f; val sMax = 2.6f             // dp/ms thresholds
-    val t = ((speedDpPerMs - sMin) / (sMax - sMin)).coerceIn(0f, 1f)
-    val ramp = t * t * (3f - 2f * t)             // smoothstep
+ *  middle, ramping to a ceiling for fast flicks. `sens` (the slider) multiplies on top. The curve
+ *  shape constants come from the controller's tuning lab so they can be adjusted live. */
+private fun accelGain(speedDpPerMs: Float, c: RelayController): Float {
+    val sens = c.sensitivity / 5f
+    if (c.accelProfile == "flat") return sens
+    val gMin = c.tuneFloor / 10f                       // precision floor
+    val gMax = 1.8f + (c.accel / 10f) * 2.4f           // ceiling: accel 0→1.8, 5→3.0, 10→4.2
+    val sMin = c.tuneSlow / 20f                         // slow threshold (dp/ms)
+    val sMax = c.tuneFast * 0.4f + 0.2f                // fast threshold (dp/ms)
+    val span = (sMax - sMin).coerceAtLeast(0.05f)
+    val t = ((speedDpPerMs - sMin) / span).coerceIn(0f, 1f)
+    val ramp = t * t * (3f - 2f * t)                   // smoothstep
     return (gMin + (gMax - gMin) * ramp) * sens
 }
 
@@ -1335,11 +1346,40 @@ private fun subtleTick(view: android.view.View) {
  *  • 3-finger swipe → app switch · 3-finger tap → find pointer
  */
 private fun Modifier.trackpadGestures(c: RelayController, view: android.view.View, onDrag: (Boolean) -> Unit = {}, onTouch: (Boolean) -> Unit = {}): Modifier = pointerInput(Unit) {
+    val pis = this                                       // PointerInputScope, used inside coroutineScope
     fun haptic(type: Int) { if (c.haptics) view.performHapticFeedback(type) }
     val dens = density.coerceAtLeast(0.5f)
-    awaitEachGesture {
+
+    // Momentum lives in its own coroutine so a new flick can interrupt and ADD to a coast in
+    // progress (you can build speed), instead of the gesture loop blocking until the coast dies.
+    // momVel is in hi-res units/SECOND; fingerDown gates emission; wake unparks the idle runner.
+    var momVel = 0f
+    var fingerDown = false
+    val wake = Channel<Unit>(Channel.CONFLATED)
+
+    coroutineScope {
+        // --- momentum runner: time-based exponential decay, frame-driven ---
+        launch {
+            var last = 0L
+            while (isActive) {
+                if (momVel == 0f || fingerDown) { last = 0L; wake.receive(); continue }
+                withFrameNanos { t ->
+                    if (last == 0L) { last = t; return@withFrameNanos }
+                    val dtMs = ((t - last) / 1_000_000L).toFloat().coerceIn(1f, 64f)
+                    last = t
+                    if (fingerDown || momVel == 0f) return@withFrameNanos
+                    val d = 0.990f + c.tuneDecay / 1000f            // per-ms retention (lab-tunable)
+                    momVel *= d.pow(dtMs)
+                    if (abs(momVel) < 150f) momVel = 0f            // stop ~1.2 lines/s
+                    else c.scrollHires((momVel * (dtMs / 1000f)).roundToInt().coerceIn(-HR_CLAMP, HR_CLAMP), 0)
+                }
+            }
+        }
+
+        pis.awaitEachGesture {
         val first = awaitFirstDown(requireUnconsumed = false)
         onTouch(true)
+        fingerDown = true                       // catch any coast: a touch pauses momentum emission
         val padW = size.width.toFloat().coerceAtLeast(1f)
         val downTime = System.currentTimeMillis()
         // one-handed scroll: sticky whole-pad lock, or a touch that begins in the right-edge gutter
@@ -1353,7 +1393,8 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
         var dragging = false        // long-press drag-lock: left button held while moving
         var scrollAcc = 0f          // hi-res vertical carry
         var scrollAccX = 0f         // hi-res horizontal (side-scroll) carry
-        var scrollVel = 0f          // hi-res units/event, for momentum
+        var flingVel = 0f           // hi-res units/SECOND, smoothed → seeds momentum at release
+        var lastScrollT = 0L        // ns timestamp of the last scroll step
         var detentCarry = 0f        // accumulates emitted hi-res units → one tick per detent
         var lastTick = 0L
         var maxPressure = first.pressure
@@ -1377,9 +1418,16 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
             val dir = if (c.naturalScroll) -1 else 1
             val gainHr = (c.scrollSpeed / 5f) * HR_PER_PX
             val stepY = dyPx * dir * gainHr
-            scrollAcc += stepY; scrollVel = scrollVel * 0.6f + stepY * 0.4f
+            scrollAcc += stepY
             val sy = scrollAcc.roundToInt()
             if (sy != 0) { c.scrollHires(sy.coerceIn(-HR_CLAMP, HR_CLAMP), 0); scrollAcc -= sy; detent(sy) }
+            // velocity in units/sec from real timestamps, lightly smoothed
+            val now = System.nanoTime()
+            if (lastScrollT != 0L) {
+                val dtSec = (now - lastScrollT) / 1e9f
+                if (dtSec > 0f) { val inst = stepY / dtSec; flingVel = flingVel * 0.6f + inst * 0.4f }
+            }
+            lastScrollT = now
             if (dxPx != 0f) {
                 scrollAccX += dxPx * dir * gainHr
                 val sx = scrollAccX.roundToInt()
@@ -1453,7 +1501,7 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                         scrollStep(d.y, 0f)             // one-handed: vertical finger → scroll
                     } else {
                         val speedDp = (dist / dens) / dt    // dp/ms
-                        val g = accelGain(speedDp, c.accelProfile, c.sensitivity / 5f, c.accel)
+                        val g = accelGain(speedDp, c)
                         val btn = if (dragging) HidConstants.MOUSE_LEFT else 0   // hold button while drag-locked
                         val ix = if (c.invertX) -1 else 1; val iy = if (c.invertY) -1 else 1
                         c.mouseMove((ix * d.x * g).roundToInt(), (iy * d.y * g).roundToInt(), 0, btn)
@@ -1474,21 +1522,21 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                 haptic(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
                 c.logEvent("click", if (right) "secondary click" else "primary click")
             }
-            else -> {
-                // momentum scroll: fling decays exponentially (iOS-style), streaming hi-res deltas,
-                // until it falls below threshold or a new touch lands.
-                if (c.momentum && abs(scrollVel) > 60f) {     // ~0.5 line
-                    var v = scrollVel * 1.4f
-                    while (abs(v) > 12f) {                     // stop ~0.1 line
-                        val nd = withTimeoutOrNull(16) { awaitFirstDown(requireUnconsumed = false) }
-                        if (nd != null) break
-                        c.scrollHires(v.roundToInt().coerceIn(-HR_CLAMP, HR_CLAMP), 0)
-                        v *= 0.94f
-                    }
-                }
-            }
         }
-    }
+        // Momentum hand-off: a fast scroll release seeds the coast and ADDS to any coast still in
+        // progress (same direction), so quick repeat flicks build speed. Anything else (tap, slow
+        // release, pointer move) catches the coast to a stop.
+        if (c.momentum && abs(flingVel) > 300f) {            // ~2.5 lines/s to count as a fling
+            val boosted = (flingVel * (1f + c.tuneFlick / 10f)).coerceIn(-80000f, 80000f)
+            momVel = if (momVel != 0f && sign(boosted) == sign(momVel))
+                (momVel + boosted).coerceIn(-80000f, 80000f) else boosted
+        } else {
+            momVel = 0f
+        }
+        fingerDown = false
+        wake.trySend(Unit)
+        }   // awaitEachGesture
+    }       // coroutineScope
 }
 
 @Composable

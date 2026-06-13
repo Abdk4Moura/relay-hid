@@ -433,6 +433,13 @@ class RelayController private constructor(private val context: Context) : HidPer
     var sensitivity by mutableStateOf(prefs.getInt("sensitivity", 5)); private set
     var accel by mutableStateOf(prefs.getInt("accel", 5)); private set
     var accelProfile by mutableStateOf(prefs.getString("accelProfile", "adaptive")!!); private set  // adaptive | flat
+    // ---- tuning lab (raw curve/momentum constants; dev-gated). Ints 0..10 mapped to floats at use. ----
+    var tuningLab by mutableStateOf(prefs.getBoolean("tuningLab", false)); private set
+    var tuneFloor by mutableStateOf(prefs.getInt("tuneFloor", 4)); private set   // gMin = tuneFloor/10  (precision floor)
+    var tuneSlow  by mutableStateOf(prefs.getInt("tuneSlow", 4)); private set    // sMin = tuneSlow/20   (slow threshold dp/ms)
+    var tuneFast  by mutableStateOf(prefs.getInt("tuneFast", 6)); private set    // sMax = tuneFast*0.4+0.2 (fast threshold)
+    var tuneDecay by mutableStateOf(prefs.getInt("tuneDecay", 8)); private set   // d  = 0.990 + tuneDecay/1000  (momentum retain/ms)
+    var tuneFlick by mutableStateOf(prefs.getInt("tuneFlick", 4)); private set   // boost = 1 + tuneFlick/10  (flick launch gain)
     var sideBias by mutableStateOf(prefs.getInt("sideBias", 6)); private set   // 0=even, 10=strongly horizontal
     var showPreview by mutableStateOf(prefs.getBoolean("showPreview", true)); private set
     var padStyle by mutableStateOf(prefs.getString("padStyle", "gradient")!!); private set   // gradient | dots | plain
@@ -566,6 +573,12 @@ class RelayController private constructor(private val context: Context) : HidPer
     fun updateSensitivity(v: Int) { sensitivity = v; prefs.edit().putInt("sensitivity", v).apply() }
     fun updateAccel(v: Int) { accel = v; prefs.edit().putInt("accel", v).apply() }
     fun updateAccelProfile(v: String) { accelProfile = v; prefs.edit().putString("accelProfile", v).apply() }
+    fun updateTuningLab(v: Boolean) { tuningLab = v; prefs.edit().putBoolean("tuningLab", v).apply() }
+    fun updateTuneFloor(v: Int) { tuneFloor = v; prefs.edit().putInt("tuneFloor", v).apply() }
+    fun updateTuneSlow(v: Int) { tuneSlow = v; prefs.edit().putInt("tuneSlow", v).apply() }
+    fun updateTuneFast(v: Int) { tuneFast = v; prefs.edit().putInt("tuneFast", v).apply() }
+    fun updateTuneDecay(v: Int) { tuneDecay = v; prefs.edit().putInt("tuneDecay", v).apply() }
+    fun updateTuneFlick(v: Int) { tuneFlick = v; prefs.edit().putInt("tuneFlick", v).apply() }
     fun updateSideBias(v: Int) { sideBias = v; prefs.edit().putInt("sideBias", v).apply() }
     fun updateShowPreview(v: Boolean) { showPreview = v; prefs.edit().putBoolean("showPreview", v).apply() }
     fun updatePadStyle(v: String) { padStyle = v; prefs.edit().putString("padStyle", v).apply() }

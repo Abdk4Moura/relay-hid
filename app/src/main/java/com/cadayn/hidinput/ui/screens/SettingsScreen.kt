@@ -102,6 +102,15 @@ fun SettingsScreen(c: RelayController) {
                     RelaySlider(c.sideBias, 0, 10, onChange = c::updateSideBias)
                 }
                 SettingRow("Firm-press → right-click", "Press harder on the pad for a secondary click (approximate)") { RelaySwitch(c.firmPress, c::updateFirmPress) }
+                SettingRow("Tuning lab", "Expose the raw curve & momentum constants to dial in the feel (testing)") { RelaySwitch(c.tuningLab, c::updateTuningLab) }
+            }
+
+            if (c.tuningLab) Group("Tuning lab (testing)", expanded) {
+                SettingRow("Precision floor", "Pointer gain at the slowest finger speed (lower = finer)") { RelaySlider(c.tuneFloor, 0, 10, onChange = c::updateTuneFloor) }
+                SettingRow("Slow threshold", "Where the curve starts ramping up from the floor") { RelaySlider(c.tuneSlow, 0, 10, onChange = c::updateTuneSlow) }
+                SettingRow("Fast threshold", "Where the curve reaches full acceleration") { RelaySlider(c.tuneFast, 0, 10, onChange = c::updateTuneFast) }
+                SettingRow("Momentum decay", "How long a scroll fling coasts (higher = longer)") { RelaySlider(c.tuneDecay, 0, 10, onChange = c::updateTuneDecay) }
+                SettingRow("Flick boost", "Launch speed of a scroll fling (higher = snappier coast)") { RelaySlider(c.tuneFlick, 0, 10, onChange = c::updateTuneFlick) }
             }
 
             Group("Gestures", expanded) {
