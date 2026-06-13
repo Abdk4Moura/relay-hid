@@ -1303,19 +1303,25 @@ private fun accelGain(speedDpPerMs: Float, profile: String, sens: Float, accel: 
 }
 
 /** Very faint scroll-detent tick: a low-amplitude composition primitive where supported, else a
- *  system clock-tick. Kept subtle because it fires often. */
+ *  system clock-tick. Kept subtle because it fires often. The composition path needs the VIBRATE
+ *  permission; if anything goes wrong (permission, OEM quirk) we fall back to the view haptic, which
+ *  needs no permission. Never let a scroll tick crash the pad. */
 private fun subtleTick(view: android.view.View) {
     val ctx = view.context
     if (android.os.Build.VERSION.SDK_INT >= 31) {
-        val vib = (ctx.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE)
-            as? android.os.VibratorManager)?.defaultVibrator
-        if (vib != null && vib.areAllPrimitivesSupported(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
-            vib.vibrate(
-                android.os.VibrationEffect.startComposition()
-                    .addPrimitive(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.22f)
-                    .compose()
-            )
-            return
+        try {
+            val vib = (ctx.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE)
+                as? android.os.VibratorManager)?.defaultVibrator
+            if (vib != null && vib.areAllPrimitivesSupported(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK)) {
+                vib.vibrate(
+                    android.os.VibrationEffect.startComposition()
+                        .addPrimitive(android.os.VibrationEffect.Composition.PRIMITIVE_LOW_TICK, 0.22f)
+                        .compose()
+                )
+                return
+            }
+        } catch (_: Throwable) {
+            // fall through to the permission-free view haptic below
         }
     }
     view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
