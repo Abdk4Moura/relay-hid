@@ -433,6 +433,10 @@ class RelayController private constructor(private val context: Context) : HidPer
     var sensitivity by mutableStateOf(prefs.getInt("sensitivity", 5)); private set
     var accel by mutableStateOf(prefs.getInt("accel", 5)); private set
     var accelProfile by mutableStateOf(prefs.getString("accelProfile", "adaptive")!!); private set  // adaptive | flat
+    // ---- the single "Feel" knob (calmer<->snappier, 0..8). Drives the curve + momentum character. ----
+    var feelPointer by mutableStateOf(prefs.getInt("feelPointer", Feel.NEUTRAL)); private set
+    var feelScroll by mutableStateOf(prefs.getInt("feelScroll", Feel.NEUTRAL)); private set
+    var feelLinked by mutableStateOf(prefs.getBoolean("feelLinked", true)); private set   // master drives both
     // ---- tuning lab (raw curve/momentum constants; dev-gated). Ints 0..10 mapped to floats at use. ----
     var tuningLab by mutableStateOf(prefs.getBoolean("tuningLab", false)); private set
     var tuneFloor by mutableStateOf(prefs.getInt("tuneFloor", 4)); private set   // gMin = tuneFloor/10  (precision floor)
@@ -573,6 +577,32 @@ class RelayController private constructor(private val context: Context) : HidPer
     fun updateSensitivity(v: Int) { sensitivity = v; prefs.edit().putInt("sensitivity", v).apply() }
     fun updateAccel(v: Int) { accel = v; prefs.edit().putInt("accel", v).apply() }
     fun updateAccelProfile(v: String) { accelProfile = v; prefs.edit().putString("accelProfile", v).apply() }
+
+    // ---- Feel knob ----
+    /** The active pointer-curve feel: raw Tuning Lab values override the knob when the lab is on. */
+    fun pointerProfile(): FeelProfile =
+        if (tuningLab) Feel.profile(feelPointer).copy(
+            gMin = tuneFloor / 10f, sMin = tuneSlow / 20f, sMax = tuneFast * 0.4f + 0.2f, gMaxMul = 1f)
+        else Feel.profile(feelPointer)
+    /** The active scroll/momentum feel: lab overrides decay/flick when on. */
+    fun scrollProfile(): FeelProfile =
+        if (tuningLab) Feel.profile(feelScroll).copy(
+            momDecay = (0.990f + tuneDecay / 1000f), flickBoost = 1f + tuneFlick / 10f, scrollMul = 0.8f)
+        else Feel.profile(feelScroll)
+    /** Master setter: when linked, moves both pointer and scroll feel together. */
+    fun updateFeel(v: Int) {
+        val f = v.coerceIn(0, Feel.DETENTS - 1)
+        feelPointer = f
+        prefs.edit().putInt("feelPointer", f).apply()
+        if (feelLinked) { feelScroll = f; prefs.edit().putInt("feelScroll", f).apply() }
+    }
+    fun updateFeelScroll(v: Int) { val f = v.coerceIn(0, Feel.DETENTS - 1); feelScroll = f; prefs.edit().putInt("feelScroll", f).apply() }
+    /** Transient feel preview (no persist) — used by the calibration duel to A/B candidates live. */
+    fun previewFeel(idx: Int) { val f = idx.coerceIn(0, Feel.DETENTS - 1); feelPointer = f; feelScroll = f }
+    fun updateFeelLinked(v: Boolean) {
+        feelLinked = v; prefs.edit().putBoolean("feelLinked", v).apply()
+        if (v) updateFeelScroll(feelPointer)   // re-link: scroll follows pointer
+    }
     fun updateTuningLab(v: Boolean) { tuningLab = v; prefs.edit().putBoolean("tuningLab", v).apply() }
     fun updateTuneFloor(v: Int) { tuneFloor = v; prefs.edit().putInt("tuneFloor", v).apply() }
     fun updateTuneSlow(v: Int) { tuneSlow = v; prefs.edit().putInt("tuneSlow", v).apply() }

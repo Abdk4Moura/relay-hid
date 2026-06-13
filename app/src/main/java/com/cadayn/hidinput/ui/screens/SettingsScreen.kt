@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import androidx.compose.ui.graphics.SolidColor
+import com.cadayn.hidinput.ui.Feel
 import com.cadayn.hidinput.ui.RelayController
 import com.cadayn.hidinput.ui.components.BtnKind
 import com.cadayn.hidinput.ui.components.RelayButton
@@ -44,6 +45,8 @@ import com.cadayn.hidinput.ui.theme.Relay
 
 @Composable
 fun SettingsScreen(c: RelayController) {
+    var calibrating by remember { mutableStateOf(false) }
+    if (calibrating) { CalibrateScreen(c, onDone = { calibrating = false }); return }
     val portrait = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
     Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 24.dp), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 620.dp)) {
@@ -81,6 +84,18 @@ fun SettingsScreen(c: RelayController) {
             }
 
             Group("Cursor & trackpad", expanded) {
+                SettingRow("Feel: ${Feel.label(c.feelPointer)}", "One knob, calmer ↔ snappier. Moves the whole curve and momentum together.") {
+                    RelaySlider(c.feelPointer, 0, Feel.DETENTS - 1, onChange = c::updateFeel)
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    RelayButton("Personalize (20s)", { calibrating = true }, kind = BtnKind.Secondary)
+                }
+                SettingRow("Tune scroll separately", "Give scrolling its own feel instead of following the pointer") {
+                    RelaySwitch(!c.feelLinked) { c.updateFeelLinked(!it) }
+                }
+                if (!c.feelLinked) SettingRow("Scroll feel: ${Feel.label(c.feelScroll)}", "calmer ↔ snappier, scrolling only") {
+                    RelaySlider(c.feelScroll, 0, Feel.DETENTS - 1, onChange = c::updateFeelScroll)
+                }
                 SettingRow("Pointer sensitivity") { RelaySlider(c.sensitivity, 1, 10, onChange = c::updateSensitivity) }
                 SettingRow("Pointer acceleration", "Adaptive = precise when slow, fast on a flick. Flat = 1:1, no curve.") {
                     Seg(c.accelProfile, listOf("adaptive" to "Adaptive", "flat" to "Flat"), c::updateAccelProfile)

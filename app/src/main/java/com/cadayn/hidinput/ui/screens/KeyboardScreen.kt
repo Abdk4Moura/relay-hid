@@ -1303,10 +1303,11 @@ private const val HR_CLAMP = 3000        // per-message safety cap (~25 lines)
 private fun accelGain(speedDpPerMs: Float, c: RelayController): Float {
     val sens = c.sensitivity / 5f
     if (c.accelProfile == "flat") return sens
-    val gMin = c.tuneFloor / 10f                       // precision floor
-    val gMax = 1.8f + (c.accel / 10f) * 2.4f           // ceiling: accel 0→1.8, 5→3.0, 10→4.2
-    val sMin = c.tuneSlow / 20f                         // slow threshold (dp/ms)
-    val sMax = c.tuneFast * 0.4f + 0.2f                // fast threshold (dp/ms)
+    val p = c.pointerProfile()                         // from the Feel knob (or the lab override)
+    val gMin = p.gMin                                  // precision floor
+    val gMax = (1.8f + (c.accel / 10f) * 2.4f) * p.gMaxMul   // ceiling, scaled by feel
+    val sMin = p.sMin                                  // slow threshold (dp/ms)
+    val sMax = p.sMax                                  // fast threshold (dp/ms)
     val span = (sMax - sMin).coerceAtLeast(0.05f)
     val t = ((speedDpPerMs - sMin) / span).coerceIn(0f, 1f)
     val ramp = t * t * (3f - 2f * t)                   // smoothstep
@@ -1345,7 +1346,7 @@ private fun subtleTick(view: android.view.View) {
  *  • tap → left click ·  2-finger tap / firm tap → right click ·  long-press → drag-lock
  *  • 3-finger swipe → app switch · 3-finger tap → find pointer
  */
-private fun Modifier.trackpadGestures(c: RelayController, view: android.view.View, onDrag: (Boolean) -> Unit = {}, onTouch: (Boolean) -> Unit = {}): Modifier = pointerInput(Unit) {
+internal fun Modifier.trackpadGestures(c: RelayController, view: android.view.View, onDrag: (Boolean) -> Unit = {}, onTouch: (Boolean) -> Unit = {}): Modifier = pointerInput(Unit) {
     val pis = this                                       // PointerInputScope, used inside coroutineScope
     fun haptic(type: Int) { if (c.haptics) view.performHapticFeedback(type) }
     val dens = density.coerceAtLeast(0.5f)
@@ -1368,7 +1369,7 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
                     val dtMs = ((t - last) / 1_000_000L).toFloat().coerceIn(1f, 64f)
                     last = t
                     if (fingerDown || momVel == 0f) return@withFrameNanos
-                    val d = 0.990f + c.tuneDecay / 1000f            // per-ms retention (lab-tunable)
+                    val d = c.scrollProfile().momDecay             // per-ms retention from the Feel knob
                     momVel *= d.pow(dtMs)
                     if (abs(momVel) < 150f) momVel = 0f            // stop ~1.2 lines/s
                     else c.scrollHires((momVel * (dtMs / 1000f)).roundToInt().coerceIn(-HR_CLAMP, HR_CLAMP), 0)
@@ -1416,7 +1417,7 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
         fun scrollStep(dyPx: Float, dxPx: Float) {
             moved = true
             val dir = if (c.naturalScroll) -1 else 1
-            val gainHr = (c.scrollSpeed / 5f) * HR_PER_PX
+            val gainHr = (c.scrollSpeed / 5f) * (c.scrollProfile().scrollMul / 0.8f) * HR_PER_PX
             val stepY = dyPx * dir * gainHr
             scrollAcc += stepY
             val sy = scrollAcc.roundToInt()
@@ -1527,7 +1528,7 @@ private fun Modifier.trackpadGestures(c: RelayController, view: android.view.Vie
         // progress (same direction), so quick repeat flicks build speed. Anything else (tap, slow
         // release, pointer move) catches the coast to a stop.
         if (c.momentum && abs(flingVel) > 300f) {            // ~2.5 lines/s to count as a fling
-            val boosted = (flingVel * (1f + c.tuneFlick / 10f)).coerceIn(-80000f, 80000f)
+            val boosted = (flingVel * c.scrollProfile().flickBoost).coerceIn(-80000f, 80000f)
             momVel = if (momVel != 0f && sign(boosted) == sign(momVel))
                 (momVel + boosted).coerceIn(-80000f, 80000f) else boosted
         } else {
