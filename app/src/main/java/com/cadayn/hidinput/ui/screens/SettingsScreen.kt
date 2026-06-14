@@ -83,7 +83,9 @@ fun SettingsScreen(c: RelayController) {
                 }
             }
 
-            Group("Cursor & trackpad", expanded) {
+            // Everything about the pad in one place: Feel knob, pointer, scroll, gestures.
+            Group("Trackpad", expanded) {
+                SubHeader("Feel")
                 SettingRow("Feel: ${Feel.label(c.feelPointer)}", "One knob, calmer ↔ snappier. Moves the whole curve and momentum together.") {
                     RelaySlider(c.feelPointer, 0, Feel.DETENTS - 1, onChange = c::updateFeel)
                 }
@@ -96,78 +98,62 @@ fun SettingsScreen(c: RelayController) {
                 if (!c.feelLinked) SettingRow("Scroll feel: ${Feel.label(c.feelScroll)}", "calmer ↔ snappier, scrolling only") {
                     RelaySlider(c.feelScroll, 0, Feel.DETENTS - 1, onChange = c::updateFeelScroll)
                 }
-                SettingRow("Pointer sensitivity") { RelaySlider(c.sensitivity, 1, 10, onChange = c::updateSensitivity) }
-                SettingRow("Pointer acceleration", "Adaptive = precise when slow, fast on a flick. Flat = 1:1, no curve.") {
+
+                SubHeader("Pointer")
+                SettingRow("Sensitivity") { RelaySlider(c.sensitivity, 1, 10, onChange = c::updateSensitivity) }
+                SettingRow("Acceleration", "Adaptive = precise when slow, fast on a flick. Flat = 1:1, no curve.") {
                     Seg(c.accelProfile, listOf("adaptive" to "Adaptive", "flat" to "Flat"), c::updateAccelProfile)
                 }
                 SettingRow("Acceleration strength", "How hard the adaptive curve ramps up on fast moves") {
                     RelaySlider(c.accel, 0, 10, onChange = c::updateAccel)
                 }
-                SettingRow("Scroll speed", "Two-finger scroll — independent of pointer speed") { RelaySlider(c.scrollSpeed, 1, 10, onChange = c::updateScrollSpeed) }
-                SettingRow("Natural scrolling") { RelaySwitch(c.naturalScroll, c::updateNaturalScroll) }
-                SettingRow("Tap to click") { RelaySwitch(c.tapClick, c::updateTapClick) }
-                SettingRow("Momentum scrolling", "Flick two fingers to keep scrolling") { RelaySwitch(c.momentum, c::updateMomentum) }
+                SettingRow("Invert X") { RelaySwitch(c.invertX, c::updateInvertX) }
+                SettingRow("Invert Y") { RelaySwitch(c.invertY, c::updateInvertY) }
+
+                SubHeader("Scroll")
+                SettingRow("Speed", "Two-finger scroll, independent of pointer speed") { RelaySlider(c.scrollSpeed, 1, 10, onChange = c::updateScrollSpeed) }
+                SettingRow("Natural scrolling", "Content follows your fingers (reverse direction)") { RelaySwitch(c.naturalScroll, c::updateNaturalScroll) }
+                SettingRow("Momentum", "Flick two fingers to keep scrolling, then coast") { RelaySwitch(c.momentum, c::updateMomentum) }
                 SettingRow("Edge scroll gutter", "One-handed: drag the right edge of the pad to scroll") { RelaySwitch(c.edgeScroll, c::updateEdgeScroll) }
-                if (!portrait) SettingRow("Trackpad auto-return", "Landscape: seconds the full pad waits (idle) before the keyboard returns. 0 = swipe only") {
-                    RelaySlider(c.padTimeout, 0, 8, onChange = c::updatePadTimeout)
-                }
-                SettingRow("Invert pointer X") { RelaySwitch(c.invertX, c::updateInvertX) }
-                SettingRow("Invert pointer Y") { RelaySwitch(c.invertY, c::updateInvertY) }
-                SettingRow("Side bias", "Favour left/right over up/down on the space-cursor") {
-                    RelaySlider(c.sideBias, 0, 10, onChange = c::updateSideBias)
-                }
-                SettingRow("Firm-press → right-click", "Press harder on the pad for a secondary click (approximate)") { RelaySwitch(c.firmPress, c::updateFirmPress) }
-                SettingRow("Tuning lab", "Expose the raw curve & momentum constants to dial in the feel (testing)") { RelaySwitch(c.tuningLab, c::updateTuningLab) }
-            }
 
-            if (c.tuningLab) Group("Tuning lab (testing)", expanded) {
-                SettingRow("Precision floor", "Pointer gain at the slowest finger speed (lower = finer)") { RelaySlider(c.tuneFloor, 0, 10, onChange = c::updateTuneFloor) }
-                SettingRow("Slow threshold", "Where the curve starts ramping up from the floor") { RelaySlider(c.tuneSlow, 0, 10, onChange = c::updateTuneSlow) }
-                SettingRow("Fast threshold", "Where the curve reaches full acceleration") { RelaySlider(c.tuneFast, 0, 10, onChange = c::updateTuneFast) }
-                SettingRow("Momentum decay", "How long a scroll fling coasts (higher = longer)") { RelaySlider(c.tuneDecay, 0, 10, onChange = c::updateTuneDecay) }
-                SettingRow("Flick boost", "Launch speed of a scroll fling (higher = snappier coast)") { RelaySlider(c.tuneFlick, 0, 10, onChange = c::updateTuneFlick) }
-            }
-
-            Group("Gestures", expanded) {
-                SettingRow("Two-finger swipe ◀ ▶", "Swipe sideways with two fingers for Back / Forward") {
+                SubHeader("Gestures & clicks")
+                SettingRow("Tap to click", "Tap the pad for a left click") { RelaySwitch(c.tapClick, c::updateTapClick) }
+                SettingRow("Two fingers", "Tap = right-click · drag = scroll · swipe sideways = Back/Forward") {
                     RelaySwitch(c.swipeNav, c::updateSwipeNav)
                 }
-                SettingRow("Two-finger scroll", "Drag two fingers up / down to scroll") {
-                    Text("⇅", style = Relay.type.mono.copy(color = Relay.colors.textDim))
-                }
-                SettingRow("Three-finger swipe", "Switch apps") {
+                SettingRow("Firm-press → right-click", "Press harder on the pad for a secondary click (approximate)") { RelaySwitch(c.firmPress, c::updateFirmPress) }
+                SettingRow("Three-finger swipe", "Switch apps (⌘⇥ / Alt-Tab)") {
                     Text("⌘⇥", style = Relay.type.mono.copy(color = Relay.colors.textDim))
                 }
                 SettingRow("Three-finger tap", "Find pointer — jiggles the cursor so you can spot it") {
                     Text("◎", style = Relay.type.mono.copy(color = Relay.colors.textDim))
                 }
+                if (!portrait) {
+                    SubHeader("Landscape")
+                    SettingRow("Full-pad auto-return", "Seconds the full pad waits (idle) before the keyboard returns. 0 = swipe only") {
+                        RelaySlider(c.padTimeout, 0, 8, onChange = c::updatePadTimeout)
+                    }
+                    SettingRow("Side bias", "Favour left/right over up/down on the space-cursor") {
+                        RelaySlider(c.sideBias, 0, 10, onChange = c::updateSideBias)
+                    }
+                }
             }
 
             Group("Feedback", expanded) {
-                SettingRow("Haptics", "Vibrate on each keystroke") { RelaySwitch(c.haptics, c::updateHaptics) }
+                SettingRow("Haptics", "Vibrate on keystrokes, taps and scroll detents") { RelaySwitch(c.haptics, c::updateHaptics) }
                 SettingRow("HID readout", "Live modifier byte + key stream") { RelaySwitch(c.showReadout, c::updateShowReadout) }
             }
 
-            Group("Hardware & connection", expanded) {
-                SettingRow("Volume buttons", "Repurpose the volume rocker while Relay is open") {
-                    Seg(c.volumeKeys, listOf("off" to "Off", "scroll" to "Scroll", "page" to "Page", "click" to "Click"), c::updateVolumeKeys)
-                }
+            Group("Connection & sync", expanded) {
                 SettingRow("Auto-reconnect", "Reconnect to the last device automatically") {
                     RelaySwitch(c.autoReconnect, c::updateAutoReconnect)
                 }
                 SettingRow("Stay awake (keep host awake)", "Imperceptible nudge every 25s so the host won't sleep") {
                     RelaySwitch(c.jiggler, c::updateJiggler)
                 }
-                SettingRow("Swap ⌘ ↔ ⌃ (advanced)", "Override the profile's modifier mapping") {
-                    RelaySwitch(c.swapCmd, c::updateSwapCmd)
+                SettingRow("Volume buttons", "Repurpose the volume rocker while Relay is open") {
+                    Seg(c.volumeKeys, listOf("off" to "Off", "scroll" to "Scroll", "page" to "Page", "click" to "Click"), c::updateVolumeKeys)
                 }
-                SettingRow("Custom Bluetooth name", "Renames this phone's Bluetooth (all connections). Forget & re-pair the host to see the new name.") {
-                    RelaySwitch(c.renameBt, c::updateRenameBt)
-                }
-                if (c.renameBt) BtNameField(c)
-            }
-
-            Group("WiFi & sync", expanded) {
                 SettingRow("Receive desktop clipboard", "Copies on the desktop set your phone clipboard automatically") {
                     RelaySwitch(c.clipboardAuto, c::updateClipboardAuto)
                 }
@@ -177,10 +163,36 @@ fun SettingsScreen(c: RelayController) {
                 SettingRow("Share to Relay", "Share text or files to “Relay” from any app to send them to the desktop") {
                     Text("share sheet", style = Relay.type.mono.copy(color = Relay.colors.textDim, fontSize = 11.sp))
                 }
+                SettingRow("Swap ⌘ ↔ ⌃", "Override the profile's modifier mapping") {
+                    RelaySwitch(c.swapCmd, c::updateSwapCmd)
+                }
+                SettingRow("Custom Bluetooth name", "Renames this phone's Bluetooth (all connections). Forget & re-pair the host to see the new name.") {
+                    RelaySwitch(c.renameBt, c::updateRenameBt)
+                }
+                if (c.renameBt) BtNameField(c)
+            }
+
+            Group("Advanced", expanded) {
+                SettingRow("Tuning lab", "Raw curve & momentum constants. The Feel knob already covers these; for fine testing only.") { RelaySwitch(c.tuningLab, c::updateTuningLab) }
+                if (c.tuningLab) {
+                    SettingRow("Precision floor", "Pointer gain at the slowest finger speed (lower = finer)") { RelaySlider(c.tuneFloor, 0, 10, onChange = c::updateTuneFloor) }
+                    SettingRow("Slow threshold", "Where the curve starts ramping up from the floor") { RelaySlider(c.tuneSlow, 0, 10, onChange = c::updateTuneSlow) }
+                    SettingRow("Fast threshold", "Where the curve reaches full acceleration") { RelaySlider(c.tuneFast, 0, 10, onChange = c::updateTuneFast) }
+                    SettingRow("Momentum decay", "How long a scroll fling coasts (higher = longer)") { RelaySlider(c.tuneDecay, 0, 10, onChange = c::updateTuneDecay) }
+                    SettingRow("Flick boost", "Launch speed of a scroll fling (higher = snappier coast)") { RelaySlider(c.tuneFlick, 0, 10, onChange = c::updateTuneFlick) }
+                }
             }
             Spacer(Modifier.height(30.dp))
         }
     }
+}
+
+/** Small uppercase divider inside a settings group, to chunk related rows. */
+@Composable
+private fun SubHeader(text: String) {
+    Spacer(Modifier.height(10.dp))
+    TText(text.uppercase(), Relay.type.label.copy(fontSize = 10.5.sp), Relay.colors.accent)
+    Spacer(Modifier.height(2.dp))
 }
 
 @Composable
