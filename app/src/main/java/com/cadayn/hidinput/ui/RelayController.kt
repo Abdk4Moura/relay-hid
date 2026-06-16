@@ -307,6 +307,17 @@ class RelayController private constructor(private val context: Context) : HidPer
     /** Which transport is live right now (single source of truth for the whole UI). */
     val activeTransport: String? get() = when { wifiConnected -> "wifi"; isConnected -> "bt"; else -> null }
 
+    /** What the current target can do, given its profile and the live transport. Drives the UI. */
+    val caps: Caps get() = Capabilities.of(profile, wifiConnected)
+
+    /** URL of the desktop receiver's live screen stream, or null if not available. */
+    fun screenStreamUrl(): String? {
+        val host = wifiHost ?: return null
+        if (!caps.screenStream) return null
+        val pin = wifiPinFor(host)
+        return "http://$host:47700/?token=$pin"
+    }
+
     /**
      * A target the user can connect to. A desktop carries [wifiHost] (and may also carry [bt] if
      * bonded); a Bluetooth-only target (iPad, TV, phone) carries only [bt] and never WiFi —

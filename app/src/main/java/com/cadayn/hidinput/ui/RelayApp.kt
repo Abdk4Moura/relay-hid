@@ -119,8 +119,10 @@ private fun ScreenContent(
         "keyboard" -> com.cadayn.hidinput.ui.screens.KeyboardScreen(c, immersive, onToggleImmersive)
         "send" -> OfflineWrap(c, onConnect = { onNav("pairing") }) { com.cadayn.hidinput.ui.screens.SendScreen(c) }
         "remote" -> OfflineWrap(c, onConnect = { onNav("pairing") }) { com.cadayn.hidinput.ui.screens.RemoteScreen(c) }
+        "screen" -> com.cadayn.hidinput.ui.screens.ScreenViewerScreen(c, onBack = { onNav("dashboard") })
         "dashboard" -> com.cadayn.hidinput.ui.screens.DashboardScreen(
-            c, onOpenKeyboard = { onNav("keyboard") }, onConnect = { onNav("pairing") })
+            c, onOpenKeyboard = { onNav("keyboard") }, onConnect = { onNav("pairing") },
+            onViewScreen = { onNav("screen") })
         "settings" -> com.cadayn.hidinput.ui.screens.SettingsScreen(c)
         "customize" -> com.cadayn.hidinput.ui.screens.CustomizeScreen(c)
         else -> Unit

@@ -37,8 +37,8 @@ import com.cadayn.hidinput.ui.components.TText
 import com.cadayn.hidinput.ui.theme.Relay
 
 @Composable
-fun DashboardScreen(c: RelayController, onOpenKeyboard: () -> Unit, onConnect: () -> Unit) {
-    if (!c.online) EmptyHub(onConnect) else ConnectedHub(c, onOpenKeyboard)
+fun DashboardScreen(c: RelayController, onOpenKeyboard: () -> Unit, onConnect: () -> Unit, onViewScreen: () -> Unit = {}) {
+    if (!c.online) EmptyHub(onConnect) else ConnectedHub(c, onOpenKeyboard, onViewScreen)
 }
 
 @Composable
@@ -58,23 +58,23 @@ private fun EmptyHub(onConnect: () -> Unit) {
 }
 
 @Composable
-private fun ConnectedHub(c: RelayController, onOpenKeyboard: () -> Unit) {
+private fun ConnectedHub(c: RelayController, onOpenKeyboard: () -> Unit, onViewScreen: () -> Unit) {
     val portrait = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
     if (portrait) {
         Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            HeroCard(c, onOpenKeyboard, Modifier.fillMaxWidth(), compact = true)
+            HeroCard(c, onOpenKeyboard, onViewScreen, Modifier.fillMaxWidth(), compact = true)
             ActivityCard(c, Modifier.fillMaxWidth().weight(1f))
         }
     } else {
         Row(Modifier.fillMaxSize().padding(28.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            HeroCard(c, onOpenKeyboard, Modifier.weight(1.35f).fillMaxHeight(), compact = false)
+            HeroCard(c, onOpenKeyboard, onViewScreen, Modifier.weight(1.35f).fillMaxHeight(), compact = false)
             ActivityCard(c, Modifier.weight(1f).fillMaxHeight())
         }
     }
 }
 
 @Composable
-private fun HeroCard(c: RelayController, onOpenKeyboard: () -> Unit, modifier: Modifier, compact: Boolean) {
+private fun HeroCard(c: RelayController, onOpenKeyboard: () -> Unit, onViewScreen: () -> Unit, modifier: Modifier, compact: Boolean) {
     val col = Relay.colors
     Column(
         modifier.clip(RoundedCornerShape(16.dp))
@@ -122,6 +122,11 @@ private fun HeroCard(c: RelayController, onOpenKeyboard: () -> Unit, modifier: M
             modifier = Modifier.fillMaxWidth(),
             leading = { RelayIcons.Keyboard(size = 18.dp, color = col.bgDeep) },
             trailing = { RelayIcons.ChevronRight(color = col.bgDeep) })
+        // Live screen: only when the target can serve it (a desktop on WiFi).
+        if (c.caps.screenStream) {
+            RelayButton("View live screen", onViewScreen, kind = BtnKind.Secondary, large = true,
+                modifier = Modifier.fillMaxWidth())
+        }
     }
 }
 
